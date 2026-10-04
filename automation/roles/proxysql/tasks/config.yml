@@ -1,0 +1,106 @@
+---
+- name: Make sure the kernel parameter "net.ipv4.ip_nonlocal_bind" is enabled
+  ansible.posix.sysctl:
+    name: "net.ipv4.ip_nonlocal_bind"
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+  ignore_errors: true # to prevent test failures in CI
+
+- name: Create the ProxySQL configuration directory "{{ proxysql_conf_dir }}"
+  ansible.builtin.file:
+    path: "{{ proxysql_conf_dir }}"
+    state: directory
+    owner: root
+    group: proxysql
+    mode: "0750"
+
+- name: Generate conf file "{{ proxysql_conf_file }}"
+  ansible.builtin.template:
+    src: templates/proxysql.cnf.j2
+    dest: "{{ proxysql_conf_file }}"
+    owner: root
+    group: proxysql
+    mode: "0640"
+  diff: false
+
+- name: Create the systemd drop-in directory "/etc/systemd/system/proxysql.service.d"
+  ansible.builtin.file:
+    path: /etc/systemd/system/proxysql.service.d
+    state: directory
+    mode: "0755"
+
+- name: Generate systemd drop-in file "/etc/systemd/system/proxysql.service.d/autobase.conf"
+  ansible.builtin.template:
+    src: templates/proxysql.service.d.conf.j2
+    dest: /etc/systemd/system/proxysql.service.d/autobase.conf
+    mode: "0644"
+  register: proxysql_service_dropin
+
+- name: Make sure the proxysql service is started and enabled
+  ansible.builtin.systemd:
+    name: proxysql
+    state: started
+    enabled: true
+    daemon_reload: "{{ proxysql_service_dropin is changed }}"
+
+- name: Wait for the ProxySQL Admin interface
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ proxysql_listen_port.admin }}"
+    state: started
+    timeout: 120
+
+- name: Check that psql is available
+  ansible.builtin.stat:
+    path: "{{ proxysql_psql }}"
+  register: proxysql_psql_stat
+
+- name: Stop if psql is not available
+  ansible.builtin.fail:
+    msg: "psql was not found at {{ proxysql_psql }}. It is required to configure ProxySQL through its Admin interface."
+  when: not proxysql_psql_stat.stat.exists
+
+- name: Generate "{{ proxysql_conf_dir }}/autobase.sql"
+  ansible.builtin.template:
+    src: templates/autobase.sql.j2
+    dest: "{{ proxysql_conf_dir }}/autobase.sql"
+    owner: root
+    group: root
+    mode: "0600"
+  register: proxysql_sql_file
+  diff: false
+
+- name: Apply the ProxySQL configuration
+  ansible.builtin.command: >-
+    {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
+    -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/autobase.sql
+  environment:
+    PGPASSWORD: "{{ proxysql_admin_password_current | default(proxysql_admin_password, true) }}"
+  changed_when: proxysql_sql_file is changed
+
+- name: Get the ProxySQL listeners (runtime)
+  ansible.builtin.command: >-
+    {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin -X -tAc
+    "SELECT variable_value FROM runtime_global_variables WHERE variable_name = 'pgsql-interfaces'"
+  environment:
+    PGPASSWORD: "{{ proxysql_admin_password }}"
+  register: proxysql_runtime_interfaces
+  changed_when: false
+
+# The listeners ('pgsql-interfaces') cannot be changed at runtime
+- name: Restart the proxysql service to apply the listeners
+  ansible.builtin.systemd:
+    name: proxysql
+    state: restarted
+  throttle: 1
+  when: proxysql_runtime_interfaces.stdout | trim != proxysql_pgsql_interfaces
+
+- name: Wait for the ProxySQL Admin interface
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ proxysql_listen_port.admin }}"
+    state: started
+    timeout: 120
+  when: proxysql_runtime_interfaces.stdout | trim != proxysql_pgsql_interfaces

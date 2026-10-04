@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+# ProxySQL reads this file only when its database ({{ '/var/lib/proxysql' }}/proxysql.db) does not exist (first start).
+# Afterwards, Ansible applies the configuration through the ProxySQL Admin interface ({{ proxysql_conf_dir }}/autobase.sql).
+datadir="/var/lib/proxysql"
+errorlog="/var/lib/proxysql/proxysql.log"
+
+admin_variables=
+{
+  admin_credentials="{{ proxysql_admin_username }}:{{ proxysql_admin_password }}"
+  mysql_ifaces="127.0.0.1:6032"
+  pgsql_ifaces="127.0.0.1:{{ proxysql_listen_port.admin }}"
+}
+
+mysql_variables=
+{
+  interfaces="127.0.0.1:6033"
+}
+
+pgsql_variables=
+{
+  interfaces="{{ proxysql_pgsql_interfaces }}"
+  monitor_enabled=true
+  monitor_username="{{ proxysql_monitor_username }}"
+  monitor_password="{{ proxysql_monitor_password }}"
+}

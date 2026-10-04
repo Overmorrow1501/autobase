@@ -1,0 +1,17 @@
+---
+# 🚀 proxysql-patroni unit tests (Python unittest, on the Ansible controller)
+- name: Molecule.tests.roles.proxysql.variables.unit_tests | Run proxysql-patroni unit tests
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.command: >-
+    python3 -m unittest discover -v
+    -s {{ proxysql_test_tests_path | default(playbook_dir ~ '/../tests/roles/proxysql') }}
+    -p test_*.py
+  register: proxysql_unit_tests
+  changed_when: false
+
+- name: Molecule.tests.roles.proxysql.variables.unit_tests | Validate unit tests result
+  run_once: true
+  ansible.builtin.assert:
+    that: proxysql_unit_tests.rc == 0
+    success_msg: "proxysql-patroni unit tests passed."

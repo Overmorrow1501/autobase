@@ -1,0 +1,61 @@
+---
+# 🚀 Render autobase.sql.j2 (ProxySQL Admin configuration)
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Ensure tmp directory exists
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "./tmp"
+    state: directory
+
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Set inputs
+  run_once: true
+  ansible.builtin.set_fact:
+    bind_address: 10.0.0.10
+    cluster_vip: ""
+    balancer_tags: ""
+    proxysql_replicas_sync_enabled: true
+    proxysql_replicas_async_enabled: true
+    proxysql_admin_password: "adminpw"
+    proxysql_monitor_password: "monpw"
+    proxysql_pgsql_variables:
+      - { option: "max_connections", value: "2000" }
+      - { option: "server_version", value: "it's" }
+    proxysql_query_rules:
+      - { rule_id: 1, proxy_port: 5000, match_digest: "^SELECT .* FOR UPDATE", destination_hostgroup: 10, apply: 1 }
+
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Load the proxysql role variables
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.include_vars:
+    file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
+
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Render autobase.sql
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.template:
+    src: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/templates/autobase.sql.j2"
+    dest: "./tmp/autobase.sql"
+
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Read autobase.sql
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.slurp:
+    src: "./tmp/autobase.sql"
+  register: proxysql_sql_render
+
+- name: Molecule.tests.roles.proxysql.variables.autobase_sql | Validate autobase.sql
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - "\"UPDATE global_variables SET variable_value = '2000' WHERE variable_name = 'pgsql-max_connections';\" in proxysql_sql_text"
+      - "\"'it''s'\" in proxysql_sql_text"
+      - >-
+        "INSERT INTO pgsql_query_rules (active, rule_id, proxy_port, match_digest, destination_hostgroup, apply)
+        VALUES (1, 1, 5000, '^SELECT .* FOR UPDATE', 10, 1);" in proxysql_sql_text
+      - "\"VALUES (1001, 1, 5001, 20, 1, 'autobase: replicas');\" in proxysql_sql_text"
+      - "\"VALUES (1002, 1, 5002, 30, 1, 'autobase: replicas_sync');\" in proxysql_sql_text"
+      - "\"VALUES (1003, 1, 5003, 40, 1, 'autobase: replicas_async');\" in proxysql_sql_text"
+      - proxysql_sql_text.index('SAVE PGSQL VARIABLES TO DISK') < proxysql_sql_text.index('LOAD PGSQL VARIABLES TO RUNTIME')
+    fail_msg: "Unexpected autobase.sql: {{ proxysql_sql_text }}"
+  vars:
+    proxysql_sql_text: "{{ proxysql_sql_render.content | b64decode }}"

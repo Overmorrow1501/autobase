@@ -1,0 +1,53 @@
+---
+# 🚀 Render proxysql.cnf.j2 (bootstrap configuration)
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Ensure tmp directory exists
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "./tmp"
+    state: directory
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Set inputs
+  run_once: true
+  ansible.builtin.set_fact:
+    bind_address: 10.0.0.10
+    cluster_vip: ""
+    balancer_tags: ""
+    proxysql_replicas_sync_enabled: true
+    proxysql_replicas_async_enabled: true
+    proxysql_admin_password: "adminpw"
+    proxysql_monitor_password: "monpw"
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Load the proxysql role variables
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.include_vars:
+    file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Render proxysql.cnf
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.template:
+    src: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/templates/proxysql.cnf.j2"
+    dest: "./tmp/proxysql.cnf"
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Read proxysql.cnf
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.slurp:
+    src: "./tmp/proxysql.cnf"
+  register: proxysql_cnf_render
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_cnf | Validate proxysql.cnf
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - "'admin_credentials=\"admin:adminpw\"' in proxysql_cnf_text"
+      - "'pgsql_ifaces=\"127.0.0.1:6132\"' in proxysql_cnf_text"
+      - "'interfaces=\"127.0.0.1:6033\"' in proxysql_cnf_text"
+      - "'interfaces=\"10.0.0.10:5000;10.0.0.10:5001;10.0.0.10:5002;10.0.0.10:5003\"' in proxysql_cnf_text"
+      - "'monitor_enabled=true' in proxysql_cnf_text"
+      - "'monitor_password=\"monpw\"' in proxysql_cnf_text"
+    fail_msg: "Unexpected proxysql.cnf: {{ proxysql_cnf_text }}"
+  vars:
+    proxysql_cnf_text: "{{ proxysql_cnf_render.content | b64decode }}"

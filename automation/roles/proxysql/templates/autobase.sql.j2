@@ -1,0 +1,31 @@
+-- {{ ansible_managed }}
+-- Applied by Ansible through the ProxySQL Admin interface (vitabaks.autobase.proxysql role).
+
+-- Admin variables
+UPDATE global_variables SET variable_value = '{{ proxysql_admin_username }}:{{ proxysql_admin_password }}' WHERE variable_name = 'admin-admin_credentials';
+UPDATE global_variables SET variable_value = '127.0.0.1:{{ proxysql_listen_port.admin }}' WHERE variable_name = 'admin-pgsql_ifaces';
+LOAD ADMIN VARIABLES TO RUNTIME;
+SAVE ADMIN VARIABLES TO DISK;
+
+-- PostgreSQL variables ('pgsql-interfaces' cannot be changed at runtime: it is saved to disk first,
+-- and Ansible restarts ProxySQL when the listeners change)
+UPDATE global_variables SET variable_value = '{{ proxysql_pgsql_interfaces }}' WHERE variable_name = 'pgsql-interfaces';
+UPDATE global_variables SET variable_value = '{{ proxysql_monitor_username }}' WHERE variable_name = 'pgsql-monitor_username';
+UPDATE global_variables SET variable_value = '{{ proxysql_monitor_password }}' WHERE variable_name = 'pgsql-monitor_password';
+{% for variable in proxysql_pgsql_variables | default([]) %}
+UPDATE global_variables SET variable_value = '{{ variable.value | string | replace("'", "''") }}' WHERE variable_name = 'pgsql-{{ variable.option }}';
+{% endfor %}
+SAVE PGSQL VARIABLES TO DISK;
+LOAD PGSQL VARIABLES TO RUNTIME;
+
+-- Query rules: the rules of 'proxysql_query_rules' (rule_id 1-999) first, then the routing by listen port
+DELETE FROM pgsql_query_rules;
+{% for item in proxysql_query_rules | default([]) %}
+{% set rule = {'active': 1} | combine(item) %}
+INSERT INTO pgsql_query_rules ({{ rule.keys() | join(', ') }}) VALUES ({% for value in rule.values() %}{{ value if value is number else "'" ~ (value | string | replace("'", "''")) ~ "'" }}{{ ', ' if not loop.last }}{% endfor %});
+{% endfor %}
+{% for route in proxysql_routing if not route.master %}
+INSERT INTO pgsql_query_rules (rule_id, active, proxy_port, destination_hostgroup, apply, comment) VALUES ({{ 1000 + loop.index }}, 1, {{ route.port }}, {{ route.hostgroup }}, 1, 'autobase: {{ route.name }}');
+{% endfor %}
+LOAD PGSQL QUERY RULES TO RUNTIME;
+SAVE PGSQL QUERY RULES TO DISK;

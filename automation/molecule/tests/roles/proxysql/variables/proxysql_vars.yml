@@ -1,0 +1,77 @@
+---
+# 🚀 Derived variables of the proxysql role (vars/main.yml): listeners, routing and psql path
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Load the proxysql role variables
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.include_vars:
+    file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Register fake hosts
+  run_once: true
+  ansible.builtin.add_host:
+    name: "{{ item.name }}"
+    groups: "{{ item.groups }}"
+  loop:
+    - { name: px_db_1, groups: [postgres_cluster, master, balancers] }
+    - { name: px_lb_1, groups: [balancers] }
+
+# 🔧 Without VIP, all listeners, balancer tags
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Set inputs (without VIP)
+  run_once: true
+  ansible.builtin.set_fact:
+    bind_address: 10.0.0.10
+    cluster_vip: ""
+    balancer_tags: "datacenter=dc1"
+    patroni_maximum_lag_on_replica: "100MB"
+    proxysql_replicas_sync_enabled: true
+    proxysql_replicas_async_enabled: true
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Validate routing and listeners without VIP
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_pgsql_interfaces == '10.0.0.10:5000;10.0.0.10:5001;10.0.0.10:5002;10.0.0.10:5003'
+      - proxysql_routing | map(attribute='hostgroup') | list == [10, 20, 30, 40]
+      - proxysql_routing[0].check == '/primary'
+      - proxysql_routing[1].check == '/replica?lag=100MB&tag_datacenter=dc1'
+      - proxysql_routing[2].check == '/sync?tag_datacenter=dc1'
+      - proxysql_routing[3].check == '/async?lag=100MB&tag_datacenter=dc1'
+    fail_msg: "Unexpected ProxySQL routing: {{ proxysql_routing }} / {{ proxysql_pgsql_interfaces }}"
+
+# 🔧 With VIP and without the sync/async listeners
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Set inputs (with VIP)
+  run_once: true
+  ansible.builtin.set_fact:
+    cluster_vip: "10.0.0.100"
+    balancer_tags: ""
+    proxysql_replicas_sync_enabled: false
+    proxysql_replicas_async_enabled: false
+
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Validate listeners with VIP
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_pgsql_interfaces == '10.0.0.100:5000;10.0.0.100:5001'
+      - proxysql_routing | length == 2
+      - proxysql_routing[1].check == '/replica?lag=100MB'
+
+# 🔧 Restore the defaults for the next test files
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Restore inputs
+  run_once: true
+  ansible.builtin.set_fact:
+    cluster_vip: ""
+    proxysql_replicas_sync_enabled: true
+    proxysql_replicas_async_enabled: true
+
+# ✅ psql client: PostgreSQL client on database servers, distribution package on dedicated balancers (Review Focus #4)
+- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Validate the psql path
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - hostvars['px_db_1'] is defined
+      - proxysql_psql_for_db == '/usr/lib/postgresql/18/bin/psql'
+      - proxysql_psql_for_lb == '/usr/bin/psql'
+  vars:
+    proxysql_psql_bin_dir: /usr/lib/postgresql/18/bin
+    proxysql_psql_for_db: "{{ (proxysql_psql_bin_dir ~ '/psql') if 'px_db_1' in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"
+    proxysql_psql_for_lb: "{{ (proxysql_psql_bin_dir ~ '/psql') if 'px_lb_1' in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"

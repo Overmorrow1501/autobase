@@ -1,0 +1,8 @@
+---
+- name: Restart proxysql-patroni service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: proxysql-patroni
+    enabled: true
+    state: restarted
+  listen: "restart proxysql-patroni"

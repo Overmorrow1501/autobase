@@ -1,0 +1,19 @@
+---
+- name: Gather package facts
+  ansible.builtin.package_facts:
+    manager: auto
+  when: ansible_facts.packages is not defined
+  check_mode: false
+  tags: proxysql, load_balancing
+
+- name: Install ProxySQL
+  ansible.builtin.import_tasks: install.yml
+  tags: proxysql, proxysql_install, load_balancing
+
+- name: Set ProxySQL passwords
+  ansible.builtin.import_tasks: passwords.yml
+  tags: proxysql, proxysql_conf, load_balancing
+
+- name: Configure ProxySQL
+  ansible.builtin.import_tasks: config.yml
+  tags: proxysql, proxysql_conf, load_balancing

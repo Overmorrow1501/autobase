@@ -1,0 +1,38 @@
+---
+# Internal variables of the proxysql role
+proxysql_repo_url: "https://repo.proxysql.com/ProxySQL/proxysql-{{ proxysql_repo_series }}"
+proxysql_conf_file: "/etc/proxysql.cnf"
+proxysql_conf_dir: "/etc/proxysql"
+
+# psql client for the ProxySQL Admin interface: the PostgreSQL client on the database servers,
+# or the distribution package ('postgresql-client' / 'postgresql') on dedicated balancers.
+proxysql_psql: "{{ (postgresql_bin_dir ~ '/psql') if inventory_hostname in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"
+
+# PostgreSQL primary (to create the monitor user and to read the users)
+proxysql_primary_host: "{{ (groups['primary'] | default(groups['master'], true)) | first }}"
+
+# The listeners bind to 'cluster_vip' (if defined), like the HAProxy listeners
+proxysql_pgsql_bind_address: "{{ cluster_vip if cluster_vip | default('') | length > 0 else proxysql_bind_address | default(bind_address, true) }}"
+
+# Routing by listen port, and the Patroni REST API check of each hostgroup (the same endpoints as HAProxy)
+proxysql_balancer_tags: >-
+  {{ balancer_tags.split(',') | map('trim') | map('regex_replace', '([^=]+)=(.*)', 'tag_\1=\2') | join('&')
+     if balancer_tags | default('') | length > 0 else '' }}
+proxysql_routing: >-
+  {{
+    [
+      {'name': 'master', 'port': proxysql_listen_port.master | int, 'hostgroup': proxysql_hostgroup.master | int,
+       'check': '/primary', 'rise': proxysql_patroni.rise_master | int, 'master': true},
+      {'name': 'replicas', 'port': proxysql_listen_port.replicas | int, 'hostgroup': proxysql_hostgroup.replicas | int,
+       'check': '/replica?lag=' ~ patroni_maximum_lag_on_replica ~ (('&' ~ proxysql_balancer_tags) if proxysql_balancer_tags | length > 0 else ''),
+       'rise': proxysql_patroni.rise_replica | int, 'master': false}
+    ]
+    + ([{'name': 'replicas_sync', 'port': proxysql_listen_port.replicas_sync | int, 'hostgroup': proxysql_hostgroup.replicas_sync | int,
+         'check': '/sync' ~ (('?' ~ proxysql_balancer_tags) if proxysql_balancer_tags | length > 0 else ''),
+         'rise': proxysql_patroni.rise_replica | int, 'master': false}] if proxysql_replicas_sync_enabled | bool else [])
+    + ([{'name': 'replicas_async', 'port': proxysql_listen_port.replicas_async | int, 'hostgroup': proxysql_hostgroup.replicas_async | int,
+         'check': '/async?lag=' ~ patroni_maximum_lag_on_replica ~ (('&' ~ proxysql_balancer_tags) if proxysql_balancer_tags | length > 0 else ''),
+         'rise': proxysql_patroni.rise_replica | int, 'master': false}] if proxysql_replicas_async_enabled | bool else [])
+  }}
+proxysql_pgsql_interfaces: >-
+  {{ proxysql_routing | map(attribute='port') | map('string') | map('regex_replace', '^', proxysql_pgsql_bind_address ~ ':') | join(';') }}

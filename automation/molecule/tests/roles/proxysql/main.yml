@@ -1,0 +1,8 @@
+---
+# 🚀 ProxySQL role tests: template rendering (on the Ansible controller) and proxysql-patroni unit tests
+- name: Molecule.tests.roles.proxysql.main | Incorporate Variable Tests
+  run_once: true
+  ansible.builtin.include_tasks: "{{ molecule_tests_roles_proxysql_main_file }}"
+  loop: "{{ lookup('fileglob', 'variables/*.yml', wantlist=True) }}"
+  loop_control:
+    loop_var: molecule_tests_roles_proxysql_main_file
