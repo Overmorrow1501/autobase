@@ -101,15 +101,64 @@ haproxy_default_server:
 confd_install: true # install confd for HAProxy config management (optional).
 confd_version: 0.33.1
 
+# ProxySQL load balancing (alternative to HAProxy, mutually exclusive with 'with_haproxy_load_balancing')
+# ProxySQL runs on the 'balancers' hosts and routes client connections directly to PostgreSQL.
+# The backends follow the Patroni cluster topology (the 'proxysql-patroni' service checks the Patroni REST API).
+with_proxysql_load_balancing: false # or 'true' if you want to install and configure the ProxySQL load balancers
+proxysql_install_repo: true # or 'false' to install ProxySQL from your own repository
+proxysql_repo_series: "3.0.x" # https://repo.proxysql.com/ProxySQL/ ("3.0.x" is the Stable tier with PostgreSQL support)
+proxysql_version: "latest" # or a specific version (e.g. '3.0.11')
+proxysql_listen_port:
+  master: 5000
+  replicas: 5001
+  replicas_sync: 5002
+  replicas_async: 5003
+  admin: 6132 # ProxySQL Admin interface (PostgreSQL protocol), listens on 127.0.0.1 only
+proxysql_replicas_sync_enabled: true # listener "replicas_sync" (proxysql_listen_port.replicas_sync)
+proxysql_replicas_async_enabled: true # listener "replicas_async" (proxysql_listen_port.replicas_async)
+proxysql_hostgroup:
+  master: 10
+  replicas: 20
+  replicas_sync: 30
+  replicas_async: 40
+proxysql_backend_port: "{{ postgresql_port }}" # ProxySQL connects directly to PostgreSQL (ProxySQL provides the connection pool)
+proxysql_backend_max_connections: 100 # maximum number of connections from each ProxySQL to each PostgreSQL server
+proxysql_admin_username: "admin"
+proxysql_admin_password: "" # If not defined, will be generated automatically during deployment.
+proxysql_monitor_username: "proxysql_monitor" # PostgreSQL user for the ProxySQL health checks (created automatically)
+proxysql_monitor_password: "" # If not defined, will be generated automatically during deployment.
+# Users allowed to connect through ProxySQL: 'patroni_superuser_username', the 'postgresql_users' with a password, and 'proxysql_users'.
+# Note: ProxySQL stores the passwords in clear text (in /var/lib/proxysql/proxysql.db).
+proxysql_users: []
+#  - { name: "app", password: "app-pass", default_hostgroup: 10, max_connections: 1000 }
+#  - { name: "old_app", state: "absent" }
+# ProxySQL 'pgsql-' global variables (without the prefix), see https://proxysql.com/documentation/
+proxysql_pgsql_variables: []
+#  - { option: "max_connections", value: "10000" }
+# Additional query rules (rule_id 1-999). The routing by listen port uses rule_id 1001-1003.
+proxysql_query_rules: []
+#  - { rule_id: 1, proxy_port: 5000, match_digest: "^SELECT .* FOR UPDATE", destination_hostgroup: 10, apply: 1 }
+#  - { rule_id: 2, proxy_port: 5000, match_digest: "^SELECT", destination_hostgroup: 20, apply: 1 }
+# 'proxysql-patroni' checks the same Patroni REST API endpoints as HAProxy (/primary, /replica, /sync, /async).
+# 'on_marked_down': "shutdown-sessions" closes the active sessions of a replica marked down (OFFLINE_HARD),
+# set it to "" (empty) to keep them (OFFLINE_SOFT). The sessions of a former primary are always closed.
+proxysql_patroni:
+  interval: 1 # seconds between checks
+  timeout: 2 # Patroni REST API request timeout (seconds)
+  fall: 3
+  rise_master: 4
+  rise_replica: 2
+  on_marked_down: "shutdown-sessions"
+
 cluster_vip: "" # IP address for client access to the databases in the cluster (optional).
 vip_interface: "{{ ansible_default_ipv4.interface }}" # interface name (e.g., "ens32").
 # Note: VIP-based solutions such as keepalived or vip-manager may not function correctly in cloud environments.
 
-# keepalived (if 'cluster_vip' is specified and 'with_haproxy_load_balancing' is 'true')
+# keepalived (if 'cluster_vip' is specified and 'with_haproxy_load_balancing' or 'with_proxysql_load_balancing' is 'true')
 keepalived_virtual_router_id: "{{ cluster_vip.split('.')[3] | int }}" # The last octet of 'cluster_vip' IP address is used by default.
 # virtual_router_id - must be unique in the network (available values are 0..255).
 
-# vip-manager (if 'cluster_vip' is specified and 'with_haproxy_load_balancing' is 'false')
+# vip-manager (if 'cluster_vip' is specified and no load balancer ('with_haproxy_load_balancing', 'with_proxysql_load_balancing') is enabled)
 # renovate: datasource=github-releases depName=cybertec-postgresql/vip-manager extractVersion=^v(?<version>.*)$
 vip_manager_version: 4.2.0
 vip_manager_conf: "/etc/patroni/vip-manager.yml"
@@ -1172,12 +1221,18 @@ firewall_allowed_tcp_ports_for:
     - 8600
   balancers: >-
     {{
-      [ansible_ssh_port | default(22),
-       haproxy_listen_port.master,
-       haproxy_listen_port.replicas]
-      + ([haproxy_listen_port.replicas_sync] if haproxy_replicas_sync_enabled | bool else [])
-      + ([haproxy_listen_port.replicas_async] if haproxy_replicas_async_enabled | bool else [])
-      + [haproxy_listen_port.stats]
+      ([ansible_ssh_port | default(22),
+        proxysql_listen_port.master,
+        proxysql_listen_port.replicas]
+       + ([proxysql_listen_port.replicas_sync] if proxysql_replicas_sync_enabled | bool else [])
+       + ([proxysql_listen_port.replicas_async] if proxysql_replicas_async_enabled | bool else []))
+      if with_proxysql_load_balancing | default(false) | bool else
+      ([ansible_ssh_port | default(22),
+        haproxy_listen_port.master,
+        haproxy_listen_port.replicas]
+       + ([haproxy_listen_port.replicas_sync] if haproxy_replicas_sync_enabled | bool else [])
+       + ([haproxy_listen_port.replicas_async] if haproxy_replicas_async_enabled | bool else [])
+       + [haproxy_listen_port.stats])
     }}
 #    - ""
 

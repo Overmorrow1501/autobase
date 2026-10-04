@@ -1,0 +1,56 @@
+---
+- name: ProxySQL | Check that only one load balancer is enabled
+  ansible.builtin.fail:
+    msg: "'with_haproxy_load_balancing' and 'with_proxysql_load_balancing' cannot both be 'true'. Choose one load balancer."
+  when: with_haproxy_load_balancing | default(false) | bool
+  run_once: true
+
+- name: ProxySQL | Check that the 'balancers' group is not empty
+  ansible.builtin.fail:
+    msg: "ProxySQL is installed on the hosts of the 'balancers' group. Add at least one host to this group in the inventory."
+  when: groups['balancers'] | default([]) | length < 1
+  run_once: true
+
+- name: ProxySQL | Check the Linux distribution
+  ansible.builtin.fail:
+    msg: >-
+      ProxySQL {{ proxysql_repo_series }} packages are not available for {{ ansible_distribution }} {{ ansible_distribution_version }}.
+      Supported: Debian 12, 13; Ubuntu 22.04, 24.04; RHEL-compatible 8, 9, 10.
+      Set 'proxysql_install_repo: false' to install ProxySQL from your own repository.
+  when:
+    - inventory_hostname in groups['balancers'] | default([])
+    - proxysql_install_repo | bool
+    - not (ansible_os_family == "RedHat" and ansible_distribution_major_version in ["8", "9", "10"])
+    - not (ansible_distribution == "Debian" and ansible_distribution_major_version in ["12", "13"])
+    - not (ansible_distribution == "Ubuntu" and ansible_distribution_version in ["22.04", "24.04"])
+
+- name: ProxySQL | Check the listen ports
+  ansible.builtin.assert:
+    that:
+      - proxysql_listen_port.values() | map('int') | unique | list | length == proxysql_listen_port | length
+      - postgresql_port | int not in proxysql_listen_port.values() | map('int') | list
+      - pgbouncer_listen_port | int not in proxysql_listen_port.values() | map('int') | list
+      - patroni_restapi_port | int not in proxysql_listen_port.values() | map('int') | list
+    fail_msg: >-
+      The ProxySQL listen ports (proxysql_listen_port) must be unique and must not use the PostgreSQL, PgBouncer
+      or Patroni REST API ports.
+  run_once: true
+
+- name: ProxySQL | Check the passwords
+  ansible.builtin.assert:
+    that:
+      - proxysql_admin_password | default('') is not search('[:;"\\\\\']')
+      - proxysql_monitor_password | default('') is not search('[;"\\\\\']')
+    fail_msg: >-
+      'proxysql_admin_password' must not contain the characters : ; " ' \ and
+      'proxysql_monitor_password' must not contain the characters ; " ' \
+  run_once: true
+
+- name: ProxySQL | Check the query rules
+  ansible.builtin.assert:
+    that:
+      - proxysql_query_rules | default([]) | selectattr('rule_id', 'undefined') | list | length == 0
+      - proxysql_query_rules | default([]) | map(attribute='rule_id', default=0) | map('int') | select('ge', 1000) | list | length == 0
+      - proxysql_query_rules | default([]) | map(attribute='rule_id', default=0) | map('int') | select('lt', 1) | list | length == 0
+    fail_msg: "Each item of 'proxysql_query_rules' requires a 'rule_id' between 1 and 999 (1001-1003 are used for the routing by port)."
+  run_once: true
