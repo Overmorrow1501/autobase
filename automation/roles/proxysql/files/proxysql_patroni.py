@@ -10,6 +10,7 @@ Managed by Autobase (vitabaks.autobase.proxysql role).
 
 import argparse
 import collections
+import http.client
 import json
 import logging
 import os
@@ -110,8 +111,10 @@ def http_get(url, timeout, context=None):
         with urlopen(Request(url, method="GET"), timeout=timeout, context=context) as response:
             return response.status, response.read()
     except HTTPError as error:
-        return error.code, b""
-    except (URLError, OSError, ValueError) as error:
+        code = error.code
+        error.close()
+        return code, b""
+    except (URLError, OSError, ValueError, http.client.HTTPException) as error:
         LOG.debug("GET %s failed: %s", url, error)
         return None, b""
 
@@ -185,11 +188,12 @@ class Syncer(object):
         self.members = {}
         self.health = {}
         self.online = None
+        self.last_cluster_url = None
         self.executor = ThreadPoolExecutor(max_workers=16)
 
     def discover(self):
         """Refresh the members from the first Patroni REST API that answers GET /cluster."""
-        urls = [member["api"] for member in self.members.values()] + list(self.conf["patroni"]["seeds"])
+        urls = ([self.last_cluster_url] if self.last_cluster_url else []) + [member["api"] for member in self.members.values()] + list(self.conf["patroni"]["seeds"])
         for url in collections.OrderedDict.fromkeys(urls):
             status, body = self.get(url + "/cluster", self.timeout, self.context)
             if status != 200:
@@ -202,6 +206,7 @@ class Syncer(object):
                 if set(members) != set(self.members):
                     LOG.info("Patroni cluster members: %s", ", ".join(sorted(members)))
                 self.members = members
+                self.last_cluster_url = url
                 return True
         LOG.warning("The Patroni REST API is not available on any member, using the last known members")
         return False
@@ -248,7 +253,11 @@ class Syncer(object):
             # Rows that are ONLINE when the service starts stay ONLINE until 'fall' failed checks (no outage on restart).
             self.online = set((row.comment, row.hostgroup_id) for row in current if row.status == ONLINE)
         self.discover()
+        if not self.members:
+            LOG.warning("No Patroni member is known yet, the ProxySQL backends are left untouched")
+            return current
         desired = self.desired(self.check())
+        self.online = set()  # the startup snapshot only seeds the first reconciliation
         if desired != current:
             log_changes(current, desired)
             self.admin.replace_servers(desired)

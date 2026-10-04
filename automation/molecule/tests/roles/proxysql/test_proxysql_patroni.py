@@ -5,8 +5,10 @@ Run: python3 -m unittest discover -s automation/molecule/tests/roles/proxysql -p
 
 import importlib.util
 import json
+import http.client
 import os
 import unittest
+from unittest import mock
 
 SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "roles", "proxysql", "files", "proxysql_patroni.py"
@@ -131,6 +133,12 @@ class ParsingTest(unittest.TestCase):
         self.assertTrue(sql.endswith("LOAD PGSQL SERVERS TO RUNTIME;\n"))
 
 
+class HttpGetTest(unittest.TestCase):
+    def test_http_exception_counts_as_failed_check(self):
+        with mock.patch.object(pp, "urlopen", side_effect=http.client.BadStatusLine("x")):
+            self.assertEqual(pp.http_get("http://10.0.0.1:8008/primary", 1), (None, b""))
+
+
 class SyncerTest(unittest.TestCase):
     def make(self, roles, servers=(), conf=None):
         self.patroni = FakePatroni(roles)
@@ -174,7 +182,9 @@ class SyncerTest(unittest.TestCase):
 
     def test_split_brain_routes_no_writes(self):
         syncer = self.make({"pgnode01": "primary", "pgnode02": "primary"})
-        servers = self.run_times(syncer, 4)
+        with self.assertLogs("proxysql-patroni", level="ERROR") as logs:
+            servers = self.run_times(syncer, 4)
+        self.assertIn("More than one member", logs.output[0])
         self.assertEqual(online(servers, 10), [])
         self.assertEqual({row.status for row in servers if row.hostgroup_id == 10}, {pp.OFFLINE_HARD})
 
@@ -204,6 +214,30 @@ class SyncerTest(unittest.TestCase):
         self.run_times(syncer, 4)
         self.patroni.roles["pgnode02"] = "down"
         self.assertIn(server(20, "pgnode02", pp.OFFLINE_SOFT), self.run_times(syncer, 3))
+
+    def test_startup_snapshot_does_not_apply_to_members_that_rejoin(self):
+        current = {
+            server(10, "pgnode01", pp.ONLINE),
+            server(20, "pgnode01", pp.OFFLINE_HARD),
+            server(10, "pgnode02", pp.OFFLINE_HARD),
+            server(20, "pgnode02", pp.ONLINE),
+        }
+        syncer = self.make({"pgnode01": "replica", "pgnode02": "primary"}, current)
+        syncer.run_once()
+        self.patroni.roles["pgnode01"] = "gone"
+        syncer.run_once()
+        self.patroni.roles["pgnode01"] = "replica"
+        for _ in range(5):
+            servers = syncer.run_once()
+            self.assertNotIn("pgnode01", online(servers, 10))
+        self.assertEqual(online(servers, 10), ["pgnode02"])
+
+    def test_unreachable_patroni_at_startup_leaves_proxysql_untouched(self):
+        current = {server(10, "pgnode01", pp.ONLINE), server(20, "pgnode02", pp.ONLINE)}
+        syncer = self.make({"pgnode01": "down", "pgnode02": "down"}, current)
+        self.run_times(syncer, 5)
+        self.assertEqual(self.admin.writes, 0)
+        self.assertEqual(self.admin.rows, current)
 
     def test_no_write_when_nothing_changes(self):
         syncer = self.make({"pgnode01": "primary", "pgnode02": "replica"})
