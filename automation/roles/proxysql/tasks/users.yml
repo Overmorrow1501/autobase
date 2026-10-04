@@ -19,6 +19,7 @@
       delegate_to: "{{ proxysql_primary_host }}"
       run_once: true
       no_log: true
+      check_mode: false
       when: hostvars[proxysql_primary_host]['patroni_superuser_password'] | default(patroni_superuser_password | default(''), true) | length < 1
 
     - name: Set the PostgreSQL superuser password
@@ -48,6 +49,38 @@
       run_once: true
       no_log: true
       when: patroni_standby_cluster.host | default('') | length < 1 # do not perform on the standby cluster
+
+    # Standby cluster: the monitor user is replicated from the source cluster, so it must be created there
+    - name: Create or update the ProxySQL monitor user on the source cluster
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ proxysql_monitor_username }}"
+        password: "{{ proxysql_monitor_password }}"
+        encrypted: true
+        role_attr_flags: "LOGIN"
+        login_host: "127.0.0.1"
+        login_port: "{{ source_cluster_postgresql_port | default(postgresql_port) }}"
+        login_user: "{{ patroni_superuser_username }}"
+        login_password: "{{ patroni_superuser_password | default(proxysql_superuser_password, true) }}"
+        login_db: "postgres"
+        state: present
+      delegate_to: "{{ groups['source_cluster'][0] }}"
+      run_once: true
+      no_log: true
+      when:
+        - patroni_standby_cluster.host | default('') | length > 0
+        - groups.get('source_cluster', []) | length > 0
+
+    - name: Warn about the ProxySQL monitor user on the source cluster
+      ansible.builtin.debug:
+        msg: >-
+          Standby cluster without the 'source_cluster' group: the ProxySQL monitor user '{{ proxysql_monitor_username }}'
+          must exist on the source cluster with the configured 'proxysql_monitor_password'.
+      run_once: true
+      when:
+        - patroni_standby_cluster.host | default('') | length > 0
+        - groups.get('source_cluster', []) | length < 1
 
     - name: Get the PostgreSQL server version
       become: true
@@ -86,11 +119,23 @@
       diff: false
       no_log: true
 
+    # The current password first: after a partial run the new admin password may be in the configuration file but not yet applied
     - name: Apply the ProxySQL users
+      ansible.builtin.command: >-
+        {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
+        -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/users.sql
+      environment:
+        PGPASSWORD: "{{ proxysql_admin_password_current | default(proxysql_admin_password, true) }}"
+      register: proxysql_users_apply
+      failed_when: false
+      changed_when: proxysql_users_sql is changed and proxysql_users_apply.rc == 0
+
+    - name: Apply the ProxySQL users (new admin password)
       ansible.builtin.command: >-
         {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
         -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/users.sql
       environment:
         PGPASSWORD: "{{ proxysql_admin_password }}"
       changed_when: proxysql_users_sql is changed
+      when: proxysql_users_apply.rc != 0
   tags: proxysql, proxysql_users, load_balancing
