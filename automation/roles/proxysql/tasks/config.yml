@@ -16,6 +16,21 @@
     group: proxysql
     mode: "0750"
 
+# The packaged ProxySQL has already created its database from the default configuration (admin:admin, monitor disabled).
+# ProxySQL reads proxysql.cnf only when the database does not exist, so on the first configuration by Autobase
+# the service is stopped and the database removed: the first start then bootstraps from the Autobase configuration.
+- name: Stop the proxysql service (first configuration by Autobase)
+  ansible.builtin.systemd:
+    name: proxysql
+    state: stopped
+  when: not proxysql_conf_managed | bool
+
+- name: Remove the ProxySQL database created from the default configuration
+  ansible.builtin.file:
+    path: /var/lib/proxysql/proxysql.db
+    state: absent
+  when: not proxysql_conf_managed | bool
+
 - name: Generate conf file "{{ proxysql_conf_file }}"
   ansible.builtin.template:
     src: templates/proxysql.cnf.j2
@@ -72,13 +87,25 @@
   register: proxysql_sql_file
   diff: false
 
+# The current password first: after a partial run the new admin password may be in the configuration file but not yet applied
 - name: Apply the ProxySQL configuration
   ansible.builtin.command: >-
     {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
     -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/autobase.sql
   environment:
     PGPASSWORD: "{{ proxysql_admin_password_current | default(proxysql_admin_password, true) }}"
+  register: proxysql_apply
+  failed_when: false
+  changed_when: proxysql_sql_file is changed and proxysql_apply.rc == 0
+
+- name: Apply the ProxySQL configuration (new admin password)
+  ansible.builtin.command: >-
+    {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
+    -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/autobase.sql
+  environment:
+    PGPASSWORD: "{{ proxysql_admin_password }}"
   changed_when: proxysql_sql_file is changed
+  when: proxysql_apply.rc != 0
 
 - name: Get the ProxySQL listeners (runtime)
   ansible.builtin.command: >-

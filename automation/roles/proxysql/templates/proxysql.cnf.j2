@@ -1,4 +1,5 @@
 {{ ansible_managed | comment }}
+# Managed by Autobase (vitabaks.autobase.proxysql)
 # ProxySQL reads this file only when its database ({{ '/var/lib/proxysql' }}/proxysql.db) does not exist (first start).
 # Afterwards, Ansible applies the configuration through the ProxySQL Admin interface ({{ proxysql_conf_dir }}/autobase.sql).
 datadir="/var/lib/proxysql"

@@ -46,6 +46,7 @@
       - "'pgsql_ifaces=\"127.0.0.1:6132\"' in proxysql_cnf_text"
       - "'interfaces=\"127.0.0.1:6033\"' in proxysql_cnf_text"
       - "'interfaces=\"10.0.0.10:5000;10.0.0.10:5001;10.0.0.10:5002;10.0.0.10:5003\"' in proxysql_cnf_text"
+      - "'# Managed by Autobase (vitabaks.autobase.proxysql)' in proxysql_cnf_text"
       - "'monitor_enabled=true' in proxysql_cnf_text"
       - "'monitor_password=\"monpw\"' in proxysql_cnf_text"
     fail_msg: "Unexpected proxysql.cnf: {{ proxysql_cnf_text }}"
