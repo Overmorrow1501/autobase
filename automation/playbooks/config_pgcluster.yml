@@ -220,6 +220,7 @@
 
     - role: vitabaks.autobase.vip_manager
       when: not with_haproxy_load_balancing | default(false) | bool and
+        not with_proxysql_load_balancing | default(false) | bool and
         (cluster_vip is defined and cluster_vip | length > 0)
 
     - role: vitabaks.autobase.postgresql_users
@@ -325,3 +326,24 @@
         - current_patroni_leader_result.status | default(0) == 200
         - secrets_provider | default('') | length > 0
       tags: secrets, postgresql_users
+
+- name: vitabaks.autobase.config_pgcluster | Configure ProxySQL
+  hosts: balancers
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  environment: "{{ proxy_env | default({}) }}"
+  tasks:
+    - name: Configure ProxySQL
+      ansible.builtin.include_role:
+        name: vitabaks.autobase.proxysql
+      when: with_proxysql_load_balancing | default(false) | bool
+      tags: load_balancing, proxysql
+
+    - name: Configure ProxySQL users
+      ansible.builtin.include_role:
+        name: vitabaks.autobase.proxysql
+        tasks_from: users
+      when: with_proxysql_load_balancing | default(false) | bool
+      tags: load_balancing, proxysql, proxysql_users

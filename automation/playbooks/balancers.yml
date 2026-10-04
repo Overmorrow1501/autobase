@@ -85,6 +85,9 @@
         - confd_install | default(true) | bool
         - dcs_type | default('etcd') == "etcd"
 
+    - role: vitabaks.autobase.proxysql
+      when: with_proxysql_load_balancing | default(false) | bool
+
     - role: vitabaks.autobase.keepalived
       when: cluster_vip is defined and cluster_vip | length > 0
 

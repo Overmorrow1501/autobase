@@ -97,7 +97,23 @@
       register: connection_info_vip_haproxy
       when: with_haproxy_load_balancing | bool
 
-    # if 'with_haproxy_load_balancing' is 'false'
+    # if 'with_proxysql_load_balancing' is 'true'
+    - name: Connection info
+      run_once: true
+      ansible.builtin.debug:
+        msg:
+          address: "{{ cluster_vip }}"
+          port:
+            primary: "{{ proxysql_listen_port.master }}"
+            replica: "{{ proxysql_listen_port.replicas }}"
+            replica_sync: "{{ proxysql_listen_port.replicas_sync if synchronous_mode | bool and proxysql_replicas_sync_enabled | bool else omit }}"
+            replica_async: "{{ proxysql_listen_port.replicas_async if synchronous_mode | bool and proxysql_replicas_async_enabled | bool else omit }}"
+          superuser: "{{ superuser_username }}"
+          password: "{{ superuser_password }}"
+      register: connection_info_vip_proxysql
+      when: with_proxysql_load_balancing | bool
+
+    # if no load balancer is used ('with_haproxy_load_balancing' and 'with_proxysql_load_balancing' are 'false')
     - name: Connection info
       run_once: true
       ansible.builtin.debug:
@@ -107,7 +123,7 @@
           superuser: "{{ superuser_username }}"
           password: "{{ superuser_password }}"
       register: connection_info_vip_direct
-      when: not with_haproxy_load_balancing | bool
+      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool
   ignore_errors: true
   vars:
     superuser_username: "{{ patroni_superuser_username }}"
@@ -137,7 +153,24 @@
       register: connection_info_local_haproxy
       when: with_haproxy_load_balancing | bool
 
-    # if 'with_haproxy_load_balancing' is 'false' and 'pgbouncer_install' is 'true'
+    # if 'with_proxysql_load_balancing' is 'true'
+    - name: Connection info
+      run_once: true
+      ansible.builtin.debug:
+        msg:
+          public_address: "{{ public_proxysql_ip_addresses if database_public_access | default(false) | bool else omit }}"
+          address: "{{ proxysql_ip_addresses }}"
+          port:
+            primary: "{{ proxysql_listen_port.master }}"
+            replica: "{{ proxysql_listen_port.replicas }}"
+            replica_sync: "{{ proxysql_listen_port.replicas_sync if synchronous_mode | bool and proxysql_replicas_sync_enabled | bool else omit }}"
+            replica_async: "{{ proxysql_listen_port.replicas_async if synchronous_mode | bool and proxysql_replicas_async_enabled | bool else omit }}"
+          superuser: "{{ superuser_username }}"
+          password: "{{ superuser_password }}"
+      register: connection_info_local_proxysql
+      when: with_proxysql_load_balancing | bool
+
+    # if no load balancer is used and 'pgbouncer_install' is 'true'
     - name: Connection info
       run_once: true
       ansible.builtin.debug:
@@ -148,9 +181,9 @@
           superuser: "{{ superuser_username }}"
           password: "{{ superuser_password }}"
       register: connection_info_local_pgbouncer
-      when: not with_haproxy_load_balancing | bool and pgbouncer_install | bool
+      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool and pgbouncer_install | bool
 
-    # if 'with_haproxy_load_balancing' is 'false' and 'pgbouncer_install' is 'false'
+    # if no load balancer is used and 'pgbouncer_install' is 'false'
     - name: Connection info
       run_once: true
       ansible.builtin.debug:
@@ -164,14 +197,21 @@
             read_write: "postgresql://{{ superuser_username }}@{{ libpq_postgres_host_port }}/postgres?target_session_attrs=read-write"
             read_only: "postgresql://{{ superuser_username }}@{{ libpq_postgres_host_port }}/postgres?target_session_attrs=read-only{{ libpq_load_balance }}"
       register: connection_info_local_postgres
-      when: not with_haproxy_load_balancing | bool and not pgbouncer_install | bool
+      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool and not pgbouncer_install | bool
   ignore_errors: true
   vars:
     public_haproxy_ip_addresses: "{{ groups['balancers'] | default([]) | map('extract', hostvars, 'ansible_ssh_host') | join(', ') }}"
+    public_proxysql_ip_addresses: "{{ groups['balancers'] | default([]) | map('extract', hostvars, 'ansible_ssh_host') | join(', ') }}"
     public_postgres_ip_addresses: "{{ groups['postgres_cluster'] | default([]) | map('extract', hostvars, 'ansible_ssh_host') | join(', ') }}"
     haproxy_ip_addresses: >-
       {{
         (groups['balancers'] | default([]) | map('extract', hostvars, 'haproxy_bind_address') | map('default', None, True) | list)
+        | zip(groups['balancers'] | default([]) | map('extract', hostvars, 'bind_address') | map('default', None, True) | list)
+        | map('list') | map('select', 'truthy') | map('first') | unique | join(', ')
+      }}
+    proxysql_ip_addresses: >-
+      {{
+        (groups['balancers'] | default([]) | map('extract', hostvars, 'proxysql_bind_address') | map('default', None, True) | list)
         | zip(groups['balancers'] | default([]) | map('extract', hostvars, 'bind_address') | map('default', None, True) | list)
         | map('list') | map('select', 'truthy') | map('first') | unique | join(', ')
       }}
@@ -377,8 +417,10 @@
       }}
     connection_info_candidates:
       - "{{ connection_info_vip_haproxy | default({}) }}"
+      - "{{ connection_info_vip_proxysql | default({}) }}"
       - "{{ connection_info_vip_direct | default({}) }}"
       - "{{ connection_info_local_haproxy | default({}) }}"
+      - "{{ connection_info_local_proxysql | default({}) }}"
       - "{{ connection_info_local_pgbouncer | default({}) }}"
       - "{{ connection_info_local_postgres | default({}) }}"
       - "{{ connection_info_consul | default({}) }}"

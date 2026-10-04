@@ -242,7 +242,7 @@
     - role: vitabaks.autobase.keepalived
       when:
         - cluster_vip is defined and cluster_vip | length > 0
-        - with_haproxy_load_balancing | default(false) | bool
+        - with_haproxy_load_balancing | default(false) | bool or with_proxysql_load_balancing | default(false) | bool
 
 - name: vitabaks.autobase.add_node | Configure new PostgreSQL node
   hosts: new_replica
@@ -280,6 +280,27 @@
     - role: vitabaks.autobase.ntp
     - role: vitabaks.autobase.copy
     - role: vitabaks.autobase.cron
+
+- name: vitabaks.autobase.add_node | Configure new ProxySQL balancer node
+  hosts: new_balancer
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  environment: "{{ proxy_env | default({}) }}"
+  vars:
+    add_balancer: true
+  tasks:
+    - name: Install and configure ProxySQL
+      ansible.builtin.include_role:
+        name: vitabaks.autobase.proxysql
+      when: with_proxysql_load_balancing | default(false) | bool
+
+    - name: Configure ProxySQL users
+      ansible.builtin.include_role:
+        name: vitabaks.autobase.proxysql
+        tasks_from: users
+      when: with_proxysql_load_balancing | default(false) | bool
 
 - name: vitabaks.autobase.add_node | Configure pgBackRest
   hosts: pgbackrest:postgres_cluster
@@ -339,6 +360,7 @@
 
     - role: vitabaks.autobase.vip_manager
       when: not with_haproxy_load_balancing | default(false) | bool and
+        not with_proxysql_load_balancing | default(false) | bool and
         (cluster_vip is defined and cluster_vip | length > 0)
 
     - role: vitabaks.autobase.postgresql_index_maintenance

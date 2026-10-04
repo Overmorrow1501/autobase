@@ -49,6 +49,19 @@
   notify: "restart keepalived"
   tags: keepalived_conf, keepalived
 
+- name: Create vrrp_script "/usr/libexec/keepalived/proxysql_check.sh"
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      /bin/kill -0 `cat /var/lib/proxysql/proxysql.pid`
+    dest: /usr/libexec/keepalived/proxysql_check.sh
+    owner: root
+    group: root
+    mode: "0700"
+  notify: "restart keepalived"
+  when: with_proxysql_load_balancing | default(false) | bool
+  tags: keepalived_conf, keepalived
+
 - name: Generate conf file "/etc/keepalived/keepalived.conf"
   ansible.builtin.template:
     src: templates/keepalived.conf.j2

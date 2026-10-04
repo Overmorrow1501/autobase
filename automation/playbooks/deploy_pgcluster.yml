@@ -254,8 +254,8 @@
 
 - name: vitabaks.autobase.deploy_pgcluster | Deploy balancers
   ansible.builtin.import_playbook: balancers.yml
-  when: with_haproxy_load_balancing | default(false) | bool
-  tags: load_balancing, haproxy
+  when: with_haproxy_load_balancing | default(false) | bool or with_proxysql_load_balancing | default(false) | bool
+  tags: load_balancing, haproxy, proxysql
 
 - name: vitabaks.autobase.deploy_pgcluster | Install and configure pgBackRest
   hosts: pgbackrest:postgres_cluster
@@ -330,6 +330,7 @@
 
     - role: vitabaks.autobase.vip_manager
       when: not with_haproxy_load_balancing | default(false) | bool and
+        not with_proxysql_load_balancing | default(false) | bool and
         (cluster_vip is defined and cluster_vip | length > 0)
 
     # optional
@@ -434,3 +435,17 @@
         name: vitabaks.autobase.secrets
       when: secrets_provider | default('') | length > 0
       tags: secrets
+
+- name: vitabaks.autobase.deploy_pgcluster | Configure ProxySQL users
+  hosts: balancers
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Configure ProxySQL users
+      ansible.builtin.include_role:
+        name: vitabaks.autobase.proxysql
+        tasks_from: users
+      when: with_proxysql_load_balancing | default(false) | bool
+      tags: load_balancing, proxysql, proxysql_users

@@ -86,6 +86,7 @@
   become_user: root
   when:
     - not with_haproxy_load_balancing | bool
+    - not with_proxysql_load_balancing | bool
     - cluster_vip | length > 0
     - pgbouncer_install | bool
     - pgbouncer_pool_pause | bool
