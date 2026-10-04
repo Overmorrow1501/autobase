@@ -36,3 +36,21 @@ proxysql_routing: >-
   }}
 proxysql_pgsql_interfaces: >-
   {{ proxysql_routing | map(attribute='port') | map('string') | map('regex_replace', '^', proxysql_pgsql_bind_address ~ ':') | join(';') }}
+
+# ProxySQL users, merged by name (later sources override earlier ones): the superuser, the PostgreSQL users
+# ('proxysql_postgresql_users', set in tasks/users.yml) and 'proxysql_users'.
+# Users without a known password are skipped (left unchanged in ProxySQL), users with 'state: absent' are removed.
+proxysql_users_effective: >-
+  {%- set users = {} -%}
+  {%- for user in [{'name': patroni_superuser_username, 'password': proxysql_superuser_password | default('')}]
+      + (proxysql_postgresql_users | default([]) | flatten(1))
+      + (proxysql_users | default([]) | flatten(1)) -%}
+    {%- set _ = users.update({user.name: users.get(user.name, {}) | combine(user)}) -%}
+  {%- endfor -%}
+  {%- set result = [] -%}
+  {%- for user in users.values() -%}
+    {%- if user.state | default('present') == 'absent' or user.password | default('', true) | string | length > 0 -%}
+      {%- set _ = result.append(user) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{ result }}

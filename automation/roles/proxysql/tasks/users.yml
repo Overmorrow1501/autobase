@@ -1,0 +1,96 @@
+---
+# ProxySQL users: 'patroni_superuser_username', the 'postgresql_users' with a known password, and 'proxysql_users'.
+# Users without a known password (e.g. existing users with 'postgresql_users_password_generation: on_create')
+# are left unchanged in ProxySQL, users with 'state: absent' are removed.
+- name: Set ProxySQL passwords
+  ansible.builtin.import_tasks: passwords.yml
+  tags: proxysql, proxysql_users, load_balancing
+
+- block:
+    - name: Get patroni superuser password
+      ansible.builtin.shell: |
+        set -o pipefail;
+        grep -A10 "authentication:" /etc/patroni/patroni.yml | \
+        grep -A3 "superuser" | grep "password:" | awk '{ gsub(/"/, "", $2); print $2 }' | tail -n 1
+      args:
+        executable: /bin/bash
+      register: proxysql_superuser_password_result
+      changed_when: false
+      delegate_to: "{{ proxysql_primary_host }}"
+      run_once: true
+      no_log: true
+      when: hostvars[proxysql_primary_host]['patroni_superuser_password'] | default(patroni_superuser_password | default(''), true) | length < 1
+
+    - name: Set the PostgreSQL superuser password
+      ansible.builtin.set_fact:
+        proxysql_superuser_password: >-
+          {{ hostvars[proxysql_primary_host]['patroni_superuser_password']
+             | default(patroni_superuser_password | default(''), true)
+             | default(proxysql_superuser_password_result.stdout | default('') | trim, true) }}
+      run_once: true
+      no_log: true
+
+    - name: Create or update the ProxySQL monitor user "{{ proxysql_monitor_username }}"
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ proxysql_monitor_username }}"
+        password: "{{ proxysql_monitor_password }}"
+        encrypted: true
+        role_attr_flags: "LOGIN"
+        login_host: "127.0.0.1"
+        login_port: "{{ postgresql_port }}"
+        login_user: "{{ patroni_superuser_username }}"
+        login_password: "{{ proxysql_superuser_password }}"
+        login_db: "postgres"
+        state: present
+      delegate_to: "{{ proxysql_primary_host }}"
+      run_once: true
+      no_log: true
+      when: patroni_standby_cluster.host | default('') | length < 1 # do not perform on the standby cluster
+
+    - name: Get the PostgreSQL server version
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        query: "SELECT current_setting('server_version_num')::int AS server_version_num"
+        login_host: "127.0.0.1"
+        login_port: "{{ postgresql_port }}"
+        login_user: "{{ patroni_superuser_username }}"
+        login_password: "{{ proxysql_superuser_password }}"
+        login_db: "postgres"
+      register: proxysql_server_version_result
+      delegate_to: "{{ proxysql_primary_host }}"
+      run_once: true
+
+    # 'postgresql_users_effective' contains the generated passwords (roles/postgresql_users)
+    - name: Set the ProxySQL users sources
+      ansible.builtin.set_fact:
+        proxysql_postgresql_users: >-
+          {{ hostvars[proxysql_primary_host]['postgresql_users_effective']
+             | default(postgresql_users | default([]), true) }}
+        proxysql_server_version: >-
+          {{ (proxysql_server_version_result.query_result[0].server_version_num | int // 10000) }}.{{
+             (proxysql_server_version_result.query_result[0].server_version_num | int % 10000) }}
+      run_once: true
+      no_log: true
+
+    - name: Generate "{{ proxysql_conf_dir }}/users.sql"
+      ansible.builtin.template:
+        src: templates/users.sql.j2
+        dest: "{{ proxysql_conf_dir }}/users.sql"
+        owner: root
+        group: root
+        mode: "0600"
+      register: proxysql_users_sql
+      diff: false
+      no_log: true
+
+    - name: Apply the ProxySQL users
+      ansible.builtin.command: >-
+        {{ proxysql_psql }} -h 127.0.0.1 -p {{ proxysql_listen_port.admin }} -U {{ proxysql_admin_username }} -d admin
+        -X -q -v ON_ERROR_STOP=1 -f {{ proxysql_conf_dir }}/users.sql
+      environment:
+        PGPASSWORD: "{{ proxysql_admin_password }}"
+      changed_when: proxysql_users_sql is changed
+  tags: proxysql, proxysql_users, load_balancing

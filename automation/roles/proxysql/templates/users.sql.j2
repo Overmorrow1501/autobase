@@ -1,0 +1,17 @@
+-- {{ ansible_managed }}
+-- ProxySQL users: users without a known password are left unchanged, users with 'state: absent' are removed.
+{% for user in proxysql_users_effective %}
+{% if user.state | default('present') == 'absent' %}
+DELETE FROM pgsql_users WHERE username = '{{ user.name | replace("'", "''") }}';
+{% else %}
+INSERT OR REPLACE INTO pgsql_users (username, password, active, default_hostgroup, transaction_persistent, max_connections, comment)
+VALUES ('{{ user.name | replace("'", "''") }}', '{{ user.password | string | replace("'", "''") }}', 1, {{ user.default_hostgroup | default(proxysql_hostgroup.master) | int }}, {{ user.transaction_persistent | default(1) | int }}, {{ user.max_connections | default(10000) | int }}, 'autobase');
+{% endif %}
+{% endfor %}
+LOAD PGSQL USERS TO RUNTIME;
+SAVE PGSQL USERS TO DISK;
+
+-- The PostgreSQL version reported to the clients
+UPDATE global_variables SET variable_value = '{{ proxysql_server_version }}' WHERE variable_name = 'pgsql-server_version';
+LOAD PGSQL VARIABLES TO RUNTIME;
+SAVE PGSQL VARIABLES TO DISK;

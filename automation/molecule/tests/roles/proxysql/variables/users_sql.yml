@@ -1,0 +1,63 @@
+---
+# 🚀 Render users.sql.j2 (ProxySQL users and the reported server version)
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Ensure tmp directory exists
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "./tmp"
+    state: directory
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Set inputs
+  run_once: true
+  ansible.builtin.set_fact:
+    patroni_superuser_username: "postgres"
+    proxysql_superuser_password: "su'pw"
+    proxysql_postgresql_users:
+      - { name: "app", password: "app-pass", max_connections: 50, default_hostgroup: 20 }
+      - { name: "existing", password: "" }
+      - { name: "old", state: "absent" }
+    proxysql_users:
+      - { name: "app", max_connections: 60 }
+    proxysql_server_version: "18.1"
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Load the proxysql role variables
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.include_vars:
+    file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Validate the merged users
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_users_effective | map(attribute='name') | sort == ['app', 'old', 'postgres']
+      - (proxysql_users_effective | selectattr('name', 'equalto', 'app') | first).max_connections == 60
+      - (proxysql_users_effective | selectattr('name', 'equalto', 'app') | first).password == 'app-pass'
+    fail_msg: "Unexpected proxysql_users_effective: {{ proxysql_users_effective }}"
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Render users.sql
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.template:
+    src: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/templates/users.sql.j2"
+    dest: "./tmp/users.sql"
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Read users.sql
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.slurp:
+    src: "./tmp/users.sql"
+  register: proxysql_users_sql_render
+
+- name: Molecule.tests.roles.proxysql.variables.users_sql | Validate users.sql
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - "\"VALUES ('postgres', 'su''pw', 1, 10, 1, 10000, 'autobase');\" in proxysql_users_sql_text"
+      - "\"VALUES ('app', 'app-pass', 1, 20, 1, 60, 'autobase');\" in proxysql_users_sql_text"
+      - "\"DELETE FROM pgsql_users WHERE username = 'old';\" in proxysql_users_sql_text"
+      - "\"'18.1' WHERE variable_name = 'pgsql-server_version';\" in proxysql_users_sql_text"
+      - "\"'existing'\" not in proxysql_users_sql_text"
+    fail_msg: "Unexpected users.sql: {{ proxysql_users_sql_text }}"
+  vars:
+    proxysql_users_sql_text: "{{ proxysql_users_sql_render.content | b64decode }}"
