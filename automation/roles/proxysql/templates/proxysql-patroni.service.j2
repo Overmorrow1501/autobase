@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Synchronize the ProxySQL backends with the Patroni cluster topology
+After=network-online.target proxysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxysql
+Group=proxysql
+Environment=PYTHONUNBUFFERED=1
+ExecStart={{ ansible_facts['python']['executable'] }} /usr/local/bin/proxysql-patroni --config {{ proxysql_conf_dir }}/patroni.json
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

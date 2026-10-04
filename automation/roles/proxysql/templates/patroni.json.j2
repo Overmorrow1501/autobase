@@ -1,0 +1,32 @@
+{
+  "interval": {{ proxysql_patroni.interval | float }},
+  "timeout": {{ proxysql_patroni.timeout | float }},
+  "fall": {{ proxysql_patroni.fall | int }},
+  "on_marked_down": {{ proxysql_patroni.on_marked_down | default('') | to_json }},
+  "admin": {
+    "psql": {{ proxysql_psql | to_json }},
+    "host": "127.0.0.1",
+    "port": {{ proxysql_listen_port.admin | int }},
+    "user": {{ proxysql_admin_username | to_json }},
+    "password": {{ proxysql_admin_password | to_json }},
+    "dbname": "admin"
+  },
+  "patroni": {
+    "protocol": {{ patroni_restapi_protocol | to_json }},
+    "seeds": [
+{% for host in groups['postgres_cluster'] %}
+      {{ (patroni_restapi_protocol ~ '://' ~ (hostvars[host]['patroni_restapi_connect_addr'] | default(hostvars[host]['patroni_bind_address'] | default(hostvars[host]['bind_address'] | default(host), true), true)) ~ ':' ~ patroni_restapi_port) | to_json }}{{ ',' if not loop.last }}
+{% endfor %}
+    ]
+  },
+  "backend": {
+    "port": {{ proxysql_backend_port | int }},
+    "max_connections": {{ proxysql_backend_max_connections | int }},
+    "use_ssl": {{ 'true' if tls_cert_generate | bool else 'false' }}
+  },
+  "hostgroups": [
+{% for route in proxysql_routing %}
+    {"id": {{ route.hostgroup | int }}, "check": {{ route.check | to_json }}, "rise": {{ route.rise | int }}, "master": {{ 'true' if route.master else 'false' }}}{{ ',' if not loop.last }}
+{% endfor %}
+  ]
+}

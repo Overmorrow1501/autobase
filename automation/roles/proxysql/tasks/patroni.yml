@@ -1,0 +1,35 @@
+---
+- name: Copy the proxysql-patroni script to "/usr/local/bin/proxysql-patroni"
+  ansible.builtin.copy:
+    src: proxysql_patroni.py
+    dest: /usr/local/bin/proxysql-patroni
+    owner: root
+    group: root
+    mode: "0755"
+  notify: "restart proxysql-patroni"
+
+- name: Generate conf file "{{ proxysql_conf_dir }}/patroni.json"
+  ansible.builtin.template:
+    src: templates/patroni.json.j2
+    dest: "{{ proxysql_conf_dir }}/patroni.json"
+    owner: root
+    group: proxysql
+    mode: "0640"
+  diff: false
+  notify: "restart proxysql-patroni"
+
+- name: Generate systemd service file "/etc/systemd/system/proxysql-patroni.service"
+  ansible.builtin.template:
+    src: templates/proxysql-patroni.service.j2
+    dest: /etc/systemd/system/proxysql-patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "restart proxysql-patroni"
+
+- name: Make sure the proxysql-patroni service is started and enabled
+  ansible.builtin.systemd:
+    name: proxysql-patroni
+    state: started
+    enabled: true
+    daemon_reload: true

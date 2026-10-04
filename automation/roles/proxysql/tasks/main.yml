@@ -17,3 +17,7 @@
 - name: Configure ProxySQL
   ansible.builtin.import_tasks: config.yml
   tags: proxysql, proxysql_conf, load_balancing
+
+- name: Configure proxysql-patroni
+  ansible.builtin.import_tasks: patroni.yml
+  tags: proxysql, proxysql_patroni, load_balancing

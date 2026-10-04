@@ -1,0 +1,74 @@
+---
+# 🚀 Render patroni.json.j2 (proxysql-patroni configuration)
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Ensure tmp directory exists
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "./tmp"
+    state: directory
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Register fake hosts
+  run_once: true
+  ansible.builtin.add_host:
+    name: "{{ item.name }}"
+    groups: [postgres_cluster]
+    bind_address: "{{ item.bind_address }}"
+    patroni_bind_address: "{{ item.patroni_bind_address | default(omit) }}"
+  loop:
+    - { name: px_json_1, bind_address: 10.0.0.1 }
+    - { name: px_json_2, bind_address: 10.0.0.2, patroni_bind_address: 10.0.0.22 }
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Set inputs
+  run_once: true
+  ansible.builtin.set_fact:
+    bind_address: 10.0.0.10
+    cluster_vip: ""
+    balancer_tags: "datacenter=dc1"
+    patroni_restapi_protocol: https
+    patroni_restapi_port: 8008
+    tls_cert_generate: true
+    proxysql_replicas_sync_enabled: true
+    proxysql_replicas_async_enabled: true
+    proxysql_admin_password: "adminpw"
+    postgresql_bin_dir: /usr/lib/postgresql/18/bin
+    postgresql_port: 5432
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Load the proxysql role variables
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.include_vars:
+    file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Render patroni.json
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.template:
+    src: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/templates/patroni.json.j2"
+    dest: "./tmp/patroni.json"
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Read patroni.json
+  run_once: true
+  delegate_to: localhost
+  ansible.builtin.slurp:
+    src: "./tmp/patroni.json"
+  register: patroni_json_render
+
+- name: Molecule.tests.roles.proxysql.variables.patroni_json | Validate patroni.json
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - conf.interval == 1
+      - conf.fall == 3
+      - conf.admin.port == 6132
+      - conf.admin.password == 'adminpw'
+      - conf.patroni.protocol == 'https'
+      - "'https://10.0.0.1:8008' in conf.patroni.seeds"
+      - "'https://10.0.0.22:8008' in conf.patroni.seeds"
+      - conf.backend.use_ssl == true
+      - conf.backend.port == 5432
+      - conf.hostgroups | map(attribute='id') | list == [10, 20, 30, 40]
+      - conf.hostgroups[1].check == '/replica?lag=100MB&tag_datacenter=dc1'
+      - conf.hostgroups[0].master == true
+    fail_msg: "Unexpected patroni.json: {{ conf }}"
+  vars:
+    conf: "{{ patroni_json_render.content | b64decode | from_json }}"
