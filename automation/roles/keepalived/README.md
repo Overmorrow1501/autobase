@@ -11,7 +11,7 @@ Note: VIP-based solutions such as keepalived may not function correctly in cloud
 | cluster_vip | "" | Virtual IP Address (VIP) for client access to the databases in the cluster. |
 | vip_interface | "{{ ansible_default_ipv4.interface }}" | Network interface where the VIP is configured (e.g., "ens32"). |
 | keepalived_virtual_router_id | | The last octet of 'cluster_vip' IP address is used by default. Must be unique in the network (available values are 0..255). |
-| keepalived_instances | _See below_ | List of VRRP instance definitions. Fields: name, state, interface, virtual_router_id, priority, advert_int, check_status_command, authentication.{auth_type,auth_pass}, virtual_ipaddresses. |
+| keepalived_instances | _See below_ | List of VRRP instance definitions. Fields: name, state, interface, virtual_router_id, priority, advert_int, check_status_command, authentication.{auth_type,auth_pass}, virtual_ipaddresses. With `with_proxysql_load_balancing`, the default `check_status_command` is `/usr/libexec/keepalived/proxysql_check.sh`. |
 
 Default `keepalived_instances` structure:
 

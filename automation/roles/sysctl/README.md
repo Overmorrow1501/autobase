@@ -18,7 +18,7 @@ Configures Linux kernel parameters via sysctl for PostgreSQL and related compone
 Notes on sysctl_conf:
 - Example structure (see roles/common/defaults/main.yml for the full list and defaults):
   - postgres_cluster: includes memory, networking, and scheduler-tuning (e.g., vm.swappiness, net.core.somaxconn, etc.).
-  - balancers: network tuning for HAProxy hosts.
+  - balancers: network tuning for load balancer (HAProxy or ProxySQL) hosts.
   - etcd_cluster/consul_instances: I/O and network tuning for DCS nodes.
 - You may add your own group keys; the role automatically picks them up if the host is a member of those groups.
 

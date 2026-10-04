@@ -403,6 +403,7 @@ Note: For more information, see the `upgrade` role [variables](../upgrade/defaul
   - Update haproxy conf file
     - Notes: Temporarily disable http-checks in order to keep database connections after stopping the Patroni service
   - Reload haproxy service
+- **ProxySQL** (if used): no maintenance mode is needed, ProxySQL connects directly to PostgreSQL ('pgbouncer_pool_pause' does not apply); proxysql-patroni restores the routing when Patroni is started again.
 - **Enable maintenance mode for vip-manager** (if used)
   - Notes: if 'pgbouncer_install' is 'true' and 'pgbouncer_pool_pause' is 'true'
   - Update vip-manager service file (comment out 'ExecStopPost')

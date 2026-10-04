@@ -74,6 +74,12 @@
 - - - keepalived_conf
 - - - keepalived_selinux
 - - - keepalived_restart
+- - proxysql
+- - - proxysql_install
+- - - - proxysql_repo
+- - - proxysql_conf
+- - - proxysql_patroni
+- - - proxysql_users
 - vip_manager
 - - vip_manager_install
 - - vip_manager_conf

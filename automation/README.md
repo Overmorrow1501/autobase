@@ -94,7 +94,7 @@ Autobase adheres to a modular design separating atomic logic (roles) and orchest
 - `deploy_pgcluster` – Deploy a new highly available PostgreSQL cluster. This playbook also includes:
   - `etcd_cluster` – Provision and configure a new etcd cluster as the DCS (used if dcs_type: etcd).
   - `consul_cluster` – Provision and configure a new Consul cluster as the DCS (used if dcs_type: consul).
-  - `balancers` – Deploy HAProxy for routing client traffic (used if with_haproxy_load_balancing: true).
+  - `balancers` – Deploy HAProxy or ProxySQL for routing client traffic (used if with_haproxy_load_balancing or with_proxysql_load_balancing: true).
 
 #### Maintenance
 
