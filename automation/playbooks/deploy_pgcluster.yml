@@ -440,7 +440,7 @@
   hosts: balancers
   become: true
   become_method: sudo
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: true
   tasks:
     - name: Configure ProxySQL users

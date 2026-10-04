@@ -7,6 +7,37 @@
   tags: proxysql, proxysql_users, load_balancing
 
 - block:
+    # The inventory primary may be stale after a failover: find the current Patroni leader
+    - name: Probe the Patroni leader
+      ansible.builtin.uri:
+        url: >-
+          {{ patroni_restapi_protocol | default('http') }}://{{ proxysql_probe_addr }}:{{ patroni_restapi_port | default('8008') }}/leader
+        status_code: [200, 503]
+        validate_certs: false
+      loop: "{{ groups.get('postgres_cluster', []) }}"
+      loop_control:
+        loop_var: proxysql_probe_item
+      vars:
+        proxysql_probe_addr: >-
+          {{ hostvars[proxysql_probe_item]['patroni_restapi_connect_addr']
+             | default(hostvars[proxysql_probe_item]['patroni_bind_address']
+             | default(hostvars[proxysql_probe_item]['bind_address'] | default(proxysql_probe_item), true), true) }}
+      register: proxysql_leader_probe
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      run_once: true
+      environment:
+        no_proxy: "*"
+
+    - name: Set the current PostgreSQL leader host
+      ansible.builtin.set_fact:
+        proxysql_leader_host: >-
+          {{ (proxysql_leader_probe.results | default([])
+              | selectattr('status', 'defined') | selectattr('status', 'equalto', 200)
+              | map(attribute='proxysql_probe_item') | list + [proxysql_primary_host]) | first }}
+      run_once: true
+
     - name: Get patroni superuser password
       ansible.builtin.shell: |
         set -o pipefail;
@@ -16,7 +47,7 @@
         executable: /bin/bash
       register: proxysql_superuser_password_result
       changed_when: false
-      delegate_to: "{{ proxysql_primary_host }}"
+      delegate_to: "{{ proxysql_leader_host }}"
       run_once: true
       no_log: true
       check_mode: false
@@ -45,7 +76,7 @@
         login_password: "{{ proxysql_superuser_password }}"
         login_db: "postgres"
         state: present
-      delegate_to: "{{ proxysql_primary_host }}"
+      delegate_to: "{{ proxysql_leader_host }}"
       run_once: true
       no_log: true
       when: patroni_standby_cluster.host | default('') | length < 1 # do not perform on the standby cluster
@@ -65,7 +96,7 @@
         login_password: "{{ patroni_superuser_password | default(proxysql_superuser_password, true) }}"
         login_db: "postgres"
         state: present
-      delegate_to: "{{ (groups.get('source_cluster', []) + [proxysql_primary_host])[0] }}"
+      delegate_to: "{{ (groups.get('source_cluster', []) + [proxysql_leader_host])[0] }}"
       run_once: true
       no_log: true
       when:
@@ -93,7 +124,7 @@
         login_password: "{{ proxysql_superuser_password }}"
         login_db: "postgres"
       register: proxysql_server_version_result
-      delegate_to: "{{ proxysql_primary_host }}"
+      delegate_to: "{{ proxysql_leader_host }}"
       run_once: true
 
     # 'postgresql_users_effective' contains the generated passwords (roles/postgresql_users)

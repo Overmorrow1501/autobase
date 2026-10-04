@@ -8,8 +8,9 @@ proxysql_conf_dir: "/etc/proxysql"
 # or the distribution package ('postgresql-client' / 'postgresql') on dedicated balancers.
 proxysql_psql: "{{ (postgresql_bin_dir ~ '/psql') if inventory_hostname in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"
 
+# PostgreSQL primary from the inventory groups (the actual leader is probed in tasks/users.yml as 'proxysql_leader_host').
 # PostgreSQL primary (to create the monitor user and to read the users)
-proxysql_primary_host: "{{ (groups['primary'] | default(groups['master'], true)) | first }}"
+proxysql_primary_host: "{{ (groups.get('primary', []) or groups.get('master', []) or [inventory_hostname]) | first }}"
 
 # The listeners bind to 'cluster_vip' (if defined), like the HAProxy listeners
 proxysql_pgsql_bind_address: "{{ cluster_vip if cluster_vip | default('') | length > 0 else proxysql_bind_address | default(bind_address, true) }}"

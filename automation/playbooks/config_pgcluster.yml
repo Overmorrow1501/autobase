@@ -331,19 +331,27 @@
   hosts: balancers
   become: true
   become_method: sudo
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: true
   environment: "{{ proxy_env | default({}) }}"
   tasks:
     - name: Configure ProxySQL
-      ansible.builtin.include_role:
-        name: vitabaks.autobase.proxysql
       when: with_proxysql_load_balancing | default(false) | bool
       tags: load_balancing, proxysql
+      block:
+        - name: Gather facts
+          ansible.builtin.setup:
 
-    - name: Configure ProxySQL users
-      ansible.builtin.include_role:
-        name: vitabaks.autobase.proxysql
-        tasks_from: users
-      when: with_proxysql_load_balancing | default(false) | bool
-      tags: load_balancing, proxysql, proxysql_users
+        - name: Define bind_address
+          ansible.builtin.include_role:
+            name: vitabaks.autobase.bind_address
+          when: bind_address is not defined
+
+        - name: Install and configure ProxySQL
+          ansible.builtin.import_role:
+            name: vitabaks.autobase.proxysql
+
+        - name: Configure ProxySQL users
+          ansible.builtin.import_role:
+            name: vitabaks.autobase.proxysql
+            tasks_from: users
