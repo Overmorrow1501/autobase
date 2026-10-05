@@ -1,0 +1,61 @@
+---
+# 🚀 Verify that ProxySQL follows an unplanned failover (the leader's Patroni is stopped)
+# 🎯 Port 5000 must reach a new leader, and the old leader must rejoin as a streaming replica
+
+- name: Molecule.tests.proxysql.failover | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_failover_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql.failover | Set leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    leader: "{{ proxysql_failover_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+
+- name: Molecule.tests.proxysql.failover | Stop Patroni on the leader
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: patroni
+    state: stopped
+  delegate_to: "{{ leader.Member }}"
+
+- name: Molecule.tests.proxysql.failover | Wait until port 5000 reaches a new leader
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host=10.172.3.200 port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_failover_result
+  until:
+    - proxysql_failover_result.rc == 0
+    - proxysql_failover_result.stdout | length > 0
+    - proxysql_failover_result.stdout != leader.Host
+  retries: 60
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql.failover | Start Patroni on the old leader
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: patroni
+    state: started
+  delegate_to: "{{ leader.Member }}"
+
+- name: Molecule.tests.proxysql.failover | Wait until the old leader is streaming
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_failover_state
+  until: >-
+    (proxysql_failover_state.stdout | from_json | selectattr('Member', 'equalto', leader.Member) | map(attribute='State') | first | default(''))
+    == 'streaming'
+  retries: 60
+  delay: 5
+  changed_when: false

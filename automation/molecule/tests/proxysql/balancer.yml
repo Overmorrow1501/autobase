@@ -1,0 +1,36 @@
+---
+# 🚀 Verify the dedicated ProxySQL balancer node
+# 🎯 Services must be active and ProxySQL must see exactly one ONLINE primary in the writer hostgroup
+
+- name: Molecule.tests.proxysql.balancer | Get ProxySQL services state
+  ansible.builtin.command: systemctl is-active proxysql proxysql-patroni
+  register: proxysql_balancer_services
+  changed_when: false
+
+- name: Molecule.tests.proxysql.balancer | Assert ProxySQL services are active
+  ansible.builtin.assert:
+    that:
+      - proxysql_balancer_services.stdout_lines | select('equalto', 'active') | list | length == 2
+    fail_msg: "proxysql and proxysql-patroni must be active"
+
+- name: Molecule.tests.proxysql.balancer | Read patroni.json
+  ansible.builtin.slurp:
+    src: /etc/proxysql/patroni.json
+  register: proxysql_balancer_json
+  become: true
+
+- name: Molecule.tests.proxysql.balancer | Parse patroni.json
+  ansible.builtin.set_fact:
+    px: "{{ proxysql_balancer_json.content | b64decode | from_json }}"
+
+- name: Molecule.tests.proxysql.balancer | Wait for one ONLINE primary in hostgroup 10
+  ansible.builtin.command: >-
+    {{ px.admin.psql }} -h 127.0.0.1 -p {{ px.admin.port }} -U {{ px.admin.user }} -d admin
+    -tAXc "SELECT count(*) FROM pgsql_servers WHERE hostgroup_id = 10 AND status = 'ONLINE'"
+  environment:
+    PGPASSWORD: "{{ px.admin.password }}"
+  register: proxysql_balancer_online
+  until: proxysql_balancer_online.stdout == "1"
+  retries: 30
+  delay: 2
+  changed_when: false

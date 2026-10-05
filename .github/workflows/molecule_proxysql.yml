@@ -1,0 +1,53 @@
+---
+name: Molecule proxysql
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 6"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'autobase-tech' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - distro: debian13
+            tag: latest
+            namespace: geerlingguy
+          - distro: debian12
+            tag: latest
+            namespace: geerlingguy
+          - distro: ubuntu2404
+            tag: latest
+            namespace: geerlingguy
+          - distro: ubuntu2204
+            tag: latest
+            namespace: geerlingguy
+
+    steps:
+      - name: Set TERM environment variable
+        run: echo "TERM=xterm" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: make bootstrap-dev
+
+      - name: Run Molecule tests for proxysql
+        run: make molecule-test-scenario
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+          IMAGE_DISTRO: ${{ matrix.config.distro }}
+          IMAGE_TAG: ${{ matrix.config.tag }}
+          IMAGE_NAMESPACE: ${{ matrix.config.namespace }}
+          MOLECULE_SCENARIO: "proxysql"

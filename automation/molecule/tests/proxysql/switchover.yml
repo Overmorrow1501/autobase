@@ -1,0 +1,48 @@
+---
+# 🚀 Verify that a Patroni switchover is followed by ProxySQL (primary listener moves to the new leader)
+# 🎯 After the switchover, port 5000 must answer from the candidate node
+
+- name: Molecule.tests.proxysql.switchover | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_switchover_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql.switchover | Select leader and candidate
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_switchover_members: "{{ proxysql_switchover_list.stdout | from_json }}"
+
+- name: Molecule.tests.proxysql.switchover | Set leader and candidate facts
+  run_once: true
+  ansible.builtin.set_fact:
+    leader: "{{ proxysql_switchover_members | selectattr('Role', 'equalto', 'Leader') | first }}"
+    candidate: >-
+      {{
+        (proxysql_switchover_members | selectattr('Role', 'equalto', 'Sync Standby') | list +
+         proxysql_switchover_members | selectattr('Role', 'equalto', 'Replica') | list) | first
+      }}
+
+- name: Molecule.tests.proxysql.switchover | Perform switchover
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: >-
+    patronictl -c /etc/patroni/patroni.yml switchover
+    --leader {{ leader.Member }} --candidate {{ candidate.Member }} --force
+  changed_when: true
+
+- name: Molecule.tests.proxysql.switchover | Wait until port 5000 reaches the new leader
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host=10.172.3.200 port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_switchover_result
+  until: proxysql_switchover_result.stdout == candidate.Host
+  retries: 30
+  delay: 2
+  changed_when: false

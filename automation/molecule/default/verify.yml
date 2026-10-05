@@ -52,6 +52,7 @@
         - ../tests/roles/confd/main.yml
         - ../tests/roles/deploy_finish/main.yml
         - ../tests/roles/haproxy/main.yml
+        - ../tests/roles/proxysql/main.yml
         - ../tests/roles/patroni/main.yml
         - ../tests/roles/pre_checks/main.yml
         - ../tests/roles/swap/main.yml
