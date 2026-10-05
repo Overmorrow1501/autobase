@@ -20,7 +20,8 @@
         netdata_install: false
         proxysql_users:
           - { name: "db1_user", max_connections: 500 }
-        # Deterministic, so that verify reads the same dcs_type.yml as the cluster deployed: set the DCS_TYPE env var (etcd or consul), default etcd
+        # Deterministic, so that verify reads the same dcs_type.yml as the cluster deployed.
+        # Set the DCS_TYPE env var (etcd or consul), default etcd (CI runs etcd, consul is tested by hand).
         dcs_type: "{{ 'etcd' if ansible_distribution_major_version in ['10'] or ansible_distribution_release in ['trixie']
           else (lookup('ansible.builtin.env', 'DCS_TYPE') | default('etcd', true)) }}" # TODO: Consul support for RHEL 10, Debian 13
         consul_node_role: server # if dcs_type: "consul"

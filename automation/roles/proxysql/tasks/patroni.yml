@@ -36,5 +36,5 @@
 
 # Apply the pending restart of proxysql-patroni now (e.g. after a change of 'proxysql_admin_password' or patroni.json),
 # not at the end of the play after the users are configured, to avoid a window of failing syncs
-- name: Apply pending ProxySQL handlers before the users are configured
+- name: Flush pending handlers (proxysql-patroni restart) before the users are configured
   ansible.builtin.meta: flush_handlers
