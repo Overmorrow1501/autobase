@@ -49,7 +49,6 @@
         - ../tests/etcd/*.yml
         - ../tests/patroni/*.yml
         - ../tests/postgres/*.yml
-        - ../tests/roles/proxysql/main.yml
         - ../tests/proxysql/routing.yml
         - ../tests/proxysql/switchover.yml
         - ../tests/proxysql/failover.yml
