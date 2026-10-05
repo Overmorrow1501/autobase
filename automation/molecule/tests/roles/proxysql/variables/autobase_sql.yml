@@ -47,14 +47,14 @@
   run_once: true
   ansible.builtin.assert:
     that:
-      - "\"UPDATE global_variables SET variable_value = '2000' WHERE variable_name = 'pgsql-max_connections';\" in proxysql_sql_text"
-      - "\"'it''s'\" in proxysql_sql_text"
+      - '"UPDATE global_variables SET variable_value = ''2000'' WHERE variable_name = ''pgsql-max_connections'';" in proxysql_sql_text'
+      - '"''it''''s''" in proxysql_sql_text'
       - >-
         "INSERT INTO pgsql_query_rules (active, rule_id, proxy_port, match_digest, destination_hostgroup, apply)
         VALUES (1, 1, 5000, '^SELECT .* FOR UPDATE', 10, 1);" in proxysql_sql_text
-      - "\"VALUES (1001, 1, 5001, 20, 1, 'autobase: replicas');\" in proxysql_sql_text"
-      - "\"VALUES (1002, 1, 5002, 30, 1, 'autobase: replicas_sync');\" in proxysql_sql_text"
-      - "\"VALUES (1003, 1, 5003, 40, 1, 'autobase: replicas_async');\" in proxysql_sql_text"
+      - '"VALUES (1001, 1, 5001, 20, 1, ''autobase: replicas'');" in proxysql_sql_text'
+      - '"VALUES (1002, 1, 5002, 30, 1, ''autobase: replicas_sync'');" in proxysql_sql_text'
+      - '"VALUES (1003, 1, 5003, 40, 1, ''autobase: replicas_async'');" in proxysql_sql_text'
       - proxysql_sql_text.index('SAVE PGSQL VARIABLES TO DISK') < proxysql_sql_text.index('LOAD PGSQL VARIABLES TO RUNTIME')
     fail_msg: "Unexpected autobase.sql: {{ proxysql_sql_text }}"
   vars:

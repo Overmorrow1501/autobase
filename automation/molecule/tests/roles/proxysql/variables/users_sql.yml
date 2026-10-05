@@ -53,11 +53,11 @@
   run_once: true
   ansible.builtin.assert:
     that:
-      - "\"VALUES ('postgres', 'su''pw', 1, 10, 1, 10000, 'autobase');\" in proxysql_users_sql_text"
-      - "\"VALUES ('app', 'app-pass', 1, 20, 1, 60, 'autobase');\" in proxysql_users_sql_text"
-      - "\"DELETE FROM pgsql_users WHERE username = 'old';\" in proxysql_users_sql_text"
-      - "\"'18.1' WHERE variable_name = 'pgsql-server_version';\" in proxysql_users_sql_text"
-      - "\"'existing'\" not in proxysql_users_sql_text"
+      - '"VALUES (''postgres'', ''su''''pw'', 1, 10, 1, 10000, ''autobase'');" in proxysql_users_sql_text'
+      - '"VALUES (''app'', ''app-pass'', 1, 20, 1, 60, ''autobase'');" in proxysql_users_sql_text'
+      - '"DELETE FROM pgsql_users WHERE username = ''old'';" in proxysql_users_sql_text'
+      - '"''18.1'' WHERE variable_name = ''pgsql-server_version'';" in proxysql_users_sql_text'
+      - '"''existing''" not in proxysql_users_sql_text'
     fail_msg: "Unexpected users.sql: {{ proxysql_users_sql_text }}"
   vars:
     proxysql_users_sql_text: "{{ proxysql_users_sql_render.content | b64decode }}"
