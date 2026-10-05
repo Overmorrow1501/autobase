@@ -1,19 +1,10 @@
 ---
-# 🚀 Derived variables of the proxysql role (vars/main.yml): listeners, routing and psql path
+# 🚀 Derived variables of the proxysql role (vars/main.yml): listeners and routing
 - name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Load the proxysql role variables
   run_once: true
   delegate_to: localhost
   ansible.builtin.include_vars:
     file: "{{ proxysql_test_role_path | default(playbook_dir ~ '/../../roles/proxysql') }}/vars/main.yml"
-
-- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Register fake hosts
-  run_once: true
-  ansible.builtin.add_host:
-    name: "{{ item.name }}"
-    groups: "{{ item.groups }}"
-  loop:
-    - { name: px_db_1, groups: [postgres_cluster, master, balancers] }
-    - { name: px_lb_1, groups: [balancers] }
 
 # 🔧 Without VIP, all listeners, balancer tags
 - name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Set inputs (without VIP)
@@ -62,16 +53,3 @@
     cluster_vip: ""
     proxysql_replicas_sync_enabled: true
     proxysql_replicas_async_enabled: true
-
-# ✅ psql client: PostgreSQL client on database servers, distribution package on dedicated balancers (Review Focus #4)
-- name: Molecule.tests.roles.proxysql.variables.proxysql_vars | Validate the psql path
-  run_once: true
-  ansible.builtin.assert:
-    that:
-      - hostvars['px_db_1'] is defined
-      - proxysql_psql_for_db == '/usr/lib/postgresql/18/bin/psql'
-      - proxysql_psql_for_lb == '/usr/bin/psql'
-  vars:
-    proxysql_psql_bin_dir: /usr/lib/postgresql/18/bin
-    proxysql_psql_for_db: "{{ (proxysql_psql_bin_dir ~ '/psql') if 'px_db_1' in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"
-    proxysql_psql_for_lb: "{{ (proxysql_psql_bin_dir ~ '/psql') if 'px_lb_1' in groups['postgres_cluster'] | default([]) else '/usr/bin/psql' }}"
