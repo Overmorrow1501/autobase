@@ -12,6 +12,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart={{ ansible_facts['python']['executable'] }} /usr/local/bin/proxysql-patroni --config {{ proxysql_conf_dir }}/patroni.json
 Restart=always
 RestartSec=2
+KillMode=mixed
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
