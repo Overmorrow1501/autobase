@@ -14,6 +14,7 @@ import http.client
 import json
 import logging
 import os
+import shutil
 import signal
 import ssl
 import subprocess
@@ -131,17 +132,43 @@ def log_changes(current, desired):
 class ProxySQLAdmin(object):
     """Minimal client of the ProxySQL Admin interface (PostgreSQL protocol) based on psql."""
 
+    FALLBACK_PSQL = "/usr/bin/psql"
+
     def __init__(self, conf):
-        self.command = [
-            conf["psql"], "-h", conf["host"], "-p", str(conf["port"]), "-U", conf["user"], "-d", conf.get("dbname", "admin"),
+        self.conf = conf
+        self.warned = False
+        self.env = dict(os.environ, PGPASSWORD=conf["password"], PGCONNECT_TIMEOUT="5")
+
+    def psql(self):
+        """Return the psql to run. The configured one (<postgresql_bin_dir>/psql) is gone after a major pg_upgrade."""
+        configured = self.conf["psql"]
+        if self.usable(configured):
+            return configured
+        found = self.FALLBACK_PSQL if self.usable(self.FALLBACK_PSQL) else shutil.which("psql")
+        if not found:
+            return configured
+        if not self.warned:
+            LOG.warning("psql %s is not available, using %s (re-run config_pgcluster to refresh the configuration)", configured, found)
+            self.warned = True
+        return found
+
+    @staticmethod
+    def usable(path):
+        """Return True if path is an existing executable file."""
+        return os.path.exists(path) and os.access(path, os.X_OK)
+
+    def build_command(self):
+        """Return the psql command line, resolving the executable at every run (it can disappear while running)."""
+        conf = self.conf
+        return [
+            self.psql(), "-h", conf["host"], "-p", str(conf["port"]), "-U", conf["user"], "-d", conf.get("dbname", "admin"),
             "-X", "-q", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1", "-f", "-",
         ]
-        self.env = dict(os.environ, PGPASSWORD=conf["password"], PGCONNECT_TIMEOUT="5")
 
     def run(self, sql):
         """Run SQL statements (one per line) and return the output of psql."""
         process = subprocess.Popen(
-            self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            self.build_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=self.env, universal_newlines=True,
         )
         try:

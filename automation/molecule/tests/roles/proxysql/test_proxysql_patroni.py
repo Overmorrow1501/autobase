@@ -139,6 +139,72 @@ class HttpGetTest(unittest.TestCase):
             self.assertEqual(pp.http_get("http://10.0.0.1:8008/primary", 1), (None, b""))
 
 
+class AdminPsqlFallbackTest(unittest.TestCase):
+    """The configured psql disappears after a major pg_upgrade (the old packages are purged)."""
+
+    CONFIGURED = "/usr/lib/postgresql/17/bin/psql"
+    ADMIN = dict(CONF["admin"], psql=CONFIGURED)
+
+    def command(self, admin, existing, which=None):
+        """Build the command with only the 'existing' paths executable and shutil.which() returning 'which'."""
+        with mock.patch.object(pp.os.path, "exists", lambda path: path in existing), \
+                mock.patch.object(pp.os, "access", lambda path, mode: path in existing), \
+                mock.patch.object(pp.shutil, "which", return_value=which):
+            return admin.build_command()
+
+    def test_configured_psql_is_used_when_present(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        with mock.patch.object(pp.LOG, "warning") as warning:
+            self.assertEqual(self.command(admin, {self.CONFIGURED, "/usr/bin/psql"})[0], self.CONFIGURED)
+        warning.assert_not_called()
+
+    def test_missing_configured_psql_falls_back_to_usr_bin(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        self.assertEqual(self.command(admin, {"/usr/bin/psql"}, which="/opt/psql")[0], "/usr/bin/psql")
+
+    def test_not_executable_configured_psql_falls_back(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        with mock.patch.object(pp.os.path, "exists", return_value=True), \
+                mock.patch.object(pp.os, "access", lambda path, mode: path == "/usr/bin/psql"):
+            self.assertEqual(admin.build_command()[0], "/usr/bin/psql")
+
+    def test_falls_back_to_path_lookup_when_usr_bin_is_missing_too(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        self.assertEqual(self.command(admin, set(), which="/opt/pg/bin/psql")[0], "/opt/pg/bin/psql")
+
+    def test_keeps_configured_psql_when_nothing_is_found(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        self.assertEqual(self.command(admin, set())[0], self.CONFIGURED)
+
+    def test_resolved_at_every_run_not_only_at_startup(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        self.assertEqual(self.command(admin, {self.CONFIGURED, "/usr/bin/psql"})[0], self.CONFIGURED)
+        self.assertEqual(self.command(admin, {"/usr/bin/psql"})[0], "/usr/bin/psql")
+
+    def test_arguments_are_unchanged(self):
+        command = self.command(pp.ProxySQLAdmin(self.ADMIN), set())
+        self.assertEqual(command[1:7], ["-h", "127.0.0.1", "-p", "6132", "-U", "admin"])
+        self.assertEqual(command[-2:], ["-f", "-"])
+
+    def test_fallback_is_logged_once(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        with self.assertLogs(pp.LOG, level="WARNING") as logs:
+            self.command(admin, {"/usr/bin/psql"})
+            self.command(admin, {"/usr/bin/psql"})
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("/usr/bin/psql", logs.records[0].getMessage())
+
+    def test_run_executes_the_resolved_command(self):
+        admin = pp.ProxySQLAdmin(self.ADMIN)
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = ("out", "")
+        with mock.patch.object(pp.os.path, "exists", lambda path: path == "/usr/bin/psql"), \
+                mock.patch.object(pp.os, "access", lambda path, mode: path == "/usr/bin/psql"), \
+                mock.patch.object(pp.subprocess, "Popen", return_value=process) as popen:
+            self.assertEqual(admin.run("SELECT 1;\n"), "out")
+        self.assertEqual(popen.call_args[0][0][0], "/usr/bin/psql")
+
+
 class SyncerTest(unittest.TestCase):
     def make(self, roles, servers=(), conf=None):
         self.patroni = FakePatroni(roles)

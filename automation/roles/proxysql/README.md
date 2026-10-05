@@ -125,6 +125,7 @@ Client TLS uses the certificate that ProxySQL generates automatically in `/var/l
 
 - `cloud_resources` and the Console do not support ProxySQL yet (on-premises / "Your Own Machines" only).
 - `pgbouncer_pool_pause` does not apply during `pg_upgrade`, ProxySQL connects directly to PostgreSQL.
+- If the PostgreSQL client of the configured version is removed (for example by `pg_upgrade`), `proxysql-patroni` falls back to `/usr/bin/psql`; `pgsql-server_version` keeps showing the old major version until `config_pgcluster.yml` (or `deploy_pgcluster.yml`) is re-run.
 - The ProxySQL 3.0.x packages are unavailable for Debian 11 and Ubuntu 26.04.
 - EL8 packages stop at 3.0.9.
 - `pgsql_servers` is fully managed by `proxysql-patroni`, manual changes are overwritten.
