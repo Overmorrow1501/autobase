@@ -341,11 +341,13 @@
       block:
         - name: Gather facts
           ansible.builtin.setup:
+          tags: always
 
         - name: Define bind_address
           ansible.builtin.include_role:
             name: vitabaks.autobase.bind_address
           when: bind_address is not defined
+          tags: always
 
         - name: Install and configure ProxySQL
           ansible.builtin.import_role:
