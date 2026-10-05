@@ -104,7 +104,8 @@ Set a flag to `false` to disable the listener, for example in a cluster with a s
 ## Configuration management
 
 - File ownership. `/etc/proxysql.cnf` carries the marker line `Managed by Autobase (vitabaks.autobase.proxysql)`. On the first configuration of a host whose configuration lacks the marker (for example the packaged default), the role stops ProxySQL and removes `/var/lib/proxysql/proxysql.db`, so ProxySQL bootstraps from the Autobase configuration. Any non-Autobase ProxySQL configuration on that host is discarded.
-- Later runs. The configuration is applied through the Admin interface without a restart. Only changing the listener ports restarts ProxySQL.
+- Later runs. The configuration is applied through the Admin interface without a restart. ProxySQL is restarted only when `pgsql-interfaces` changes, which includes a change of the listener ports, of `cluster_vip` or of the bind address.
+- `proxysql_pgsql_variables`. Removing an entry does not reset the runtime value: it stays until ProxySQL is restarted from a fresh configuration or the value is set explicitly.
 - `pgsql_servers`. The table is fully owned by `proxysql-patroni`. It is not saved to disk, and `proxysql-patroni` repopulates it within one interval after a ProxySQL restart.
 - Monitor. The ProxySQL monitor is enabled from the start. The monitor user is created on the primary. On a standby cluster it is created on the first host of the `source_cluster` group if one is defined, otherwise a warning reminds you to create it on the source cluster with `proxysql_monitor_password`.
 - keepalived. When `cluster_vip` is set, the default `check_status_command` of keepalived is `/usr/libexec/keepalived/proxysql_check.sh`. If you override `keepalived_instances`, set `check_status_command` yourself.
@@ -116,6 +117,7 @@ Set a flag to `false` to disable the listener, for example in a cluster with a s
 - Cleartext storage. ProxySQL stores the passwords in clear text (in `/var/lib/proxysql/proxysql.db`). ProxySQL 3.0.11 needs the cleartext password to authenticate with SCRAM to the PostgreSQL backend, see the [ProxySQL PostgreSQL authentication](https://www.proxysql.com/documentation/users-management/postgresql-authentication) documentation.
 - `postgresql_users_password_generation: on_create`. Users whose password is not known (existing users) are left unchanged in ProxySQL, they are not removed or blanked. To make such a user available through ProxySQL, add it to `proxysql_users` with its password.
 - Admin password. Changing `proxysql_admin_password` later is applied by `config_pgcluster.yml`. If the password is not defined, the role reuses the one from the existing Autobase configuration, or generates a new one.
+- `add_node.yml`. When `postgresql_users_password_generation` is `on_create` or `always`, a new balancer added with `add_node.yml` only receives the users whose passwords are known in the inventory (`postgresql_users` with a `password`, and `proxysql_users`), not the generated ones. Run `config_pgcluster.yml` afterwards to configure them on all balancers.
 
 ## TLS
 
@@ -129,6 +131,10 @@ Client TLS uses the certificate that ProxySQL generates automatically in `/var/l
 - The ProxySQL 3.0.x packages are unavailable for Debian 11 and Ubuntu 26.04.
 - EL8 packages stop at 3.0.9.
 - `pgsql_servers` is fully managed by `proxysql-patroni`, manual changes are overwritten.
+- Switching an existing HAProxy cluster to ProxySQL is not supported: HAProxy keeps ports 5000-5003 and `config_pgcluster.yml` does not remove it.
+- `balancers.yml` on its own only installs ProxySQL. The users and the monitor user are configured by `deploy_pgcluster.yml`, `config_pgcluster.yml` and `add_node.yml`.
+- Do not limit runs (`--limit`) to the balancer hosts: the facts of the database servers are not gathered, so `/etc/proxysql/patroni.json` uses the inventory hostnames of the backends instead of their IP addresses.
+- The RPM path (AlmaLinux/Rocky 8-10 repositories, `/usr/pgsql-N/bin/psql`) and RHEL-family dedicated balancers are implemented but were not exercised in the integration tests (only Ubuntu 24.04 was).
 - SELinux: not covered (tested in containers without SELinux).
 
 ## Dependencies
