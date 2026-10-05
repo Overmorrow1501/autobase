@@ -123,7 +123,9 @@
           superuser: "{{ superuser_username }}"
           password: "{{ superuser_password }}"
       register: connection_info_vip_direct
-      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool
+      when:
+        - not with_haproxy_load_balancing | bool
+        - not with_proxysql_load_balancing | bool
   ignore_errors: true
   vars:
     superuser_username: "{{ patroni_superuser_username }}"
@@ -181,7 +183,10 @@
           superuser: "{{ superuser_username }}"
           password: "{{ superuser_password }}"
       register: connection_info_local_pgbouncer
-      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool and pgbouncer_install | bool
+      when:
+        - not with_haproxy_load_balancing | bool
+        - not with_proxysql_load_balancing | bool
+        - pgbouncer_install | bool
 
     # if no load balancer is used and 'pgbouncer_install' is 'false'
     - name: Connection info
@@ -197,7 +202,10 @@
             read_write: "postgresql://{{ superuser_username }}@{{ libpq_postgres_host_port }}/postgres?target_session_attrs=read-write"
             read_only: "postgresql://{{ superuser_username }}@{{ libpq_postgres_host_port }}/postgres?target_session_attrs=read-only{{ libpq_load_balance }}"
       register: connection_info_local_postgres
-      when: not with_haproxy_load_balancing | bool and not with_proxysql_load_balancing | bool and not pgbouncer_install | bool
+      when:
+        - not with_haproxy_load_balancing | bool
+        - not with_proxysql_load_balancing | bool
+        - not pgbouncer_install | bool
   ignore_errors: true
   vars:
     public_haproxy_ip_addresses: "{{ groups['balancers'] | default([]) | map('extract', hostvars, 'ansible_ssh_host') | join(', ') }}"
