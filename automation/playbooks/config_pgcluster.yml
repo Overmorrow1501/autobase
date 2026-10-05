@@ -357,3 +357,4 @@
           ansible.builtin.import_role:
             name: vitabaks.autobase.proxysql
             tasks_from: users
+          tags: postgresql_users, proxysql_users
