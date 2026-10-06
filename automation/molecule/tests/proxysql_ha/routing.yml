@@ -1,0 +1,28 @@
+---
+# 🚀 Verify that ProxySQL routes each enabled listener port to the expected node role through the cluster VIP
+# 🎯 Port 5000 must reach the primary, the read ports must reach replicas, and the disabled listeners must not accept connections
+
+- name: Molecule.tests.proxysql_ha.routing | Check pg_is_in_recovery() on each listener port
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port={{ item.port }} dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select pg_is_in_recovery()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_routing_result
+  until: proxysql_ha_routing_result.stdout == item.recovery
+  retries: 30
+  delay: 2
+  changed_when: false
+  loop: "{{ proxysql_ha_routes }}"
+  loop_control:
+    label: "port {{ item.port }}"
+
+- name: Molecule.tests.proxysql_ha.routing | Check that the disabled listener ports do not accept connections
+  run_once: true
+  ansible.builtin.wait_for:
+    host: "{{ proxysql_ha_vip }}"
+    port: "{{ item }}"
+    state: stopped
+    timeout: 5
+  loop: "{{ proxysql_ha_closed_ports }}"

@@ -1,0 +1,61 @@
+---
+# 🚀 Verify that a Patroni switchover to a given replica is followed by ProxySQL (parameter: proxysql_ha_candidate, the member name)
+# 🎯 After the switchover, port 5000 must answer from the candidate, and the cluster must be back to a stable topology
+
+- name: Molecule.tests.proxysql_ha.switchover | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_switchover_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.switchover | Set leader and candidate facts
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_switchover_leader: "{{ proxysql_ha_switchover_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+    proxysql_ha_switchover_candidate: "{{ proxysql_ha_switchover_list.stdout | from_json | selectattr('Member', 'equalto', proxysql_ha_candidate) | first }}"
+
+- name: Molecule.tests.proxysql_ha.switchover | Assert the candidate is not the leader
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_switchover_leader.Member != proxysql_ha_switchover_candidate.Member
+    fail_msg: "{{ proxysql_ha_candidate }} is already the leader"
+
+- name: Molecule.tests.proxysql_ha.switchover | Perform switchover to {{ proxysql_ha_candidate }}
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: >-
+    patronictl -c /etc/patroni/patroni.yml switchover
+    --leader {{ proxysql_ha_switchover_leader.Member }} --candidate {{ proxysql_ha_switchover_candidate.Member }} --force
+  changed_when: true
+
+- name: Molecule.tests.proxysql_ha.switchover | Wait until port 5000 reaches the new leader
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_switchover_result
+  until: proxysql_ha_switchover_result.stdout == proxysql_ha_switchover_candidate.Host
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.switchover | Wait until the cluster is stable (one leader, all the standbys streaming, the sync standbys restored)
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_switchover_state
+  until:
+    - proxysql_ha_switchover_state.rc == 0
+    - proxysql_ha_switchover_state.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list == [proxysql_ha_candidate]
+    - proxysql_ha_switchover_state.stdout | from_json | rejectattr('State', 'in', ['running', 'streaming']) | list | length == 0
+    - proxysql_ha_switchover_state.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | list | length == proxysql_ha_sync_count | int
+  retries: 60
+  delay: 5
+  changed_when: false

@@ -1,0 +1,39 @@
+---
+# 🚀 Verify the replication state of the standbys as seen by the primary
+# 🎯 Every standby must be streaming with the expected sync_state (sync or async)
+
+- name: Molecule.tests.proxysql_ha.replication | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_replication_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.replication | Set leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_replication_leader: "{{ proxysql_ha_replication_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+
+- name: Molecule.tests.proxysql_ha.replication | Set expected standbys fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_replication_expected: >-
+      {{
+        (proxysql_ha_sync_members | difference([proxysql_ha_replication_leader.Member]) | map('regex_replace', '$', ':sync') | list)
+        + (proxysql_ha_async_members | difference([proxysql_ha_replication_leader.Member]) | map('regex_replace', '$', ':async') | list)
+      }}
+
+- name: Molecule.tests.proxysql_ha.replication | Wait until pg_stat_replication on the primary shows the expected sync_state of each standby
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql -h {{ postgresql_unix_socket_dir }} -p {{ postgresql_port }} -U {{ patroni_superuser_username }} -d postgres
+    -tAXc "select application_name || ':' || sync_state from pg_stat_replication order by 1"
+  delegate_to: "{{ proxysql_ha_replication_leader.Member }}"
+  register: proxysql_ha_replication_result
+  until: proxysql_ha_replication_result.stdout_lines == (proxysql_ha_replication_expected | sort)
+  retries: 30
+  delay: 2
+  changed_when: false

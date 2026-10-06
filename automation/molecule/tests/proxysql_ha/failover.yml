@@ -1,0 +1,105 @@
+---
+# 🚀 Verify that ProxySQL follows an unplanned failover (the leader's Patroni is stopped)
+# 🎯 A new leader must be elected among the eligible members within 60 s, port 5000 must follow it,
+# 🎯 and the old leader must rejoin as a streaming replica
+
+- name: Molecule.tests.proxysql_ha.failover | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_failover_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.failover | Set leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_failover_leader: "{{ proxysql_ha_failover_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+
+- name: Molecule.tests.proxysql_ha.failover | Stop Patroni on the leader
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: patroni
+    state: stopped
+  delegate_to: "{{ proxysql_ha_failover_leader.Member }}"
+
+- name: Molecule.tests.proxysql_ha.failover | Wait up to 60 s until a new leader is elected
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_failover_state
+  until:
+    - proxysql_ha_failover_state.rc == 0
+    - proxysql_ha_failover_state.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list | length == 1
+    - >-
+      proxysql_ha_failover_state.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first
+      != proxysql_ha_failover_leader.Member
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.failover | Set new leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_failover_new_leader: "{{ proxysql_ha_failover_state.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+
+- name: Molecule.tests.proxysql_ha.failover | Assert the new leader is an eligible member
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_failover_new_leader.Member in (proxysql_ha_failover_eligible | difference([proxysql_ha_failover_leader.Member]))
+      - proxysql_ha_failover_new_leader.Member not in proxysql_ha_never_leader
+    fail_msg: >-
+      The new leader {{ proxysql_ha_failover_new_leader.Member }} must be one of
+      {{ proxysql_ha_failover_eligible | difference([proxysql_ha_failover_leader.Member]) }} and never one of {{ proxysql_ha_never_leader }}
+
+- name: Molecule.tests.proxysql_ha.failover | Wait up to 60 s until port 5000 reaches the new leader
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_failover_result
+  until:
+    - proxysql_ha_failover_result.rc == 0
+    - proxysql_ha_failover_result.stdout == proxysql_ha_failover_new_leader.Host
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.failover | Start Patroni on the old leader
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: patroni
+    state: started
+  delegate_to: "{{ proxysql_ha_failover_leader.Member }}"
+
+- name: Molecule.tests.proxysql_ha.failover | Wait until the old leader is streaming
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_failover_rejoin
+  until:
+    - proxysql_ha_failover_rejoin.rc == 0
+    - >-
+      proxysql_ha_failover_rejoin.stdout | from_json | selectattr('Member', 'equalto', proxysql_ha_failover_leader.Member)
+      | map(attribute='State') | first | default('') == 'streaming'
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.failover | Assert port 5000 still reaches the new leader after the old leader rejoined
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_failover_final
+  failed_when: proxysql_ha_failover_final.stdout != proxysql_ha_failover_new_leader.Host
+  changed_when: false

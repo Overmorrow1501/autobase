@@ -1,0 +1,27 @@
+---
+# 🚀 Verify the role of the DR node (patroni_tags: nofailover=true, nosync=true)
+# 🎯 The DR node must be a streaming asynchronous replica, never a Sync Standby
+
+- name: Molecule.tests.proxysql_ha.dr_roles | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_dr_roles_list
+  until:
+    - proxysql_ha_dr_roles_list.rc == 0
+    - >-
+      proxysql_ha_dr_roles_list.stdout | from_json | selectattr('Member', 'equalto', proxysql_ha_dr_node) | map(attribute='State') | first | default('')
+      == 'streaming'
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.dr_roles | Assert the DR node is a plain Replica
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_dr_roles_list.stdout | from_json | selectattr('Member', 'equalto', proxysql_ha_dr_node) | map(attribute='Role') | first == 'Replica'
+      - proxysql_ha_dr_roles_list.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | map(attribute='Member') | list | length == 1
+      - proxysql_ha_dr_roles_list.stdout | from_json | selectattr('Role', 'equalto', 'Sync Standby') | map(attribute='Member') | first != proxysql_ha_dr_node
+    fail_msg: "{{ proxysql_ha_dr_node }} must be a streaming Replica (never a Sync Standby): {{ proxysql_ha_dr_roles_list.stdout }}"

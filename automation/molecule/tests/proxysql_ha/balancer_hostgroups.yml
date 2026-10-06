@@ -1,0 +1,70 @@
+---
+# 🚀 Verify the ProxySQL hostgroups of a dedicated balancer node
+# 🎯 Each hostgroup must have the expected ONLINE servers (the leader excluded), the excluded members must never be ONLINE,
+# 🎯 and all the balancers must have the same ONLINE rows
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Get cluster state from the first database node
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  delegate_to: "{{ groups['postgres_cluster'] | first }}"
+  register: proxysql_ha_hostgroups_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Set leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_hostgroups_leader: >-
+      {{ proxysql_ha_hostgroups_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first }}
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Read patroni.json
+  ansible.builtin.slurp:
+    src: /etc/proxysql/patroni.json
+  register: proxysql_ha_hostgroups_json
+  become: true
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Parse patroni.json
+  ansible.builtin.set_fact:
+    px: "{{ proxysql_ha_hostgroups_json.content | b64decode | from_json }}"
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Wait for the expected ONLINE servers of each hostgroup
+  ansible.builtin.command: >-
+    {{ px.admin.psql }} -h 127.0.0.1 -p {{ px.admin.port }} -U {{ px.admin.user }} -d admin
+    -tAXc "SELECT comment FROM pgsql_servers WHERE hostgroup_id = {{ item.hostgroup }} AND status = 'ONLINE' ORDER BY comment"
+  environment:
+    PGPASSWORD: "{{ px.admin.password }}"
+  register: proxysql_ha_hostgroups_result
+  until: proxysql_ha_hostgroups_result.stdout_lines == (item.members | difference([proxysql_ha_hostgroups_leader]) | sort)
+  retries: 30
+  delay: 2
+  changed_when: false
+  loop: "{{ proxysql_ha_expected_online }}"
+  loop_control:
+    label: "hostgroup {{ item.hostgroup }}"
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Read all the ONLINE servers
+  ansible.builtin.command: >-
+    {{ px.admin.psql }} -h 127.0.0.1 -p {{ px.admin.port }} -U {{ px.admin.user }} -d admin
+    -tAXc "SELECT hostgroup_id || ':' || comment FROM pgsql_servers WHERE status = 'ONLINE' ORDER BY 1"
+  environment:
+    PGPASSWORD: "{{ px.admin.password }}"
+  register: proxysql_ha_hostgroups_online
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Set the ONLINE rows fact
+  ansible.builtin.set_fact:
+    proxysql_ha_online_rows: "{{ proxysql_ha_hostgroups_online.stdout_lines }}"
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Assert the excluded members are never ONLINE
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_online_rows | map('regex_replace', '^[0-9]+:', '') | select('in', proxysql_ha_never_online) | list | length == 0
+    fail_msg: "{{ proxysql_ha_never_online }} must not be ONLINE in any hostgroup, got {{ proxysql_ha_online_rows }}"
+
+- name: Molecule.tests.proxysql_ha.balancer_hostgroups | Assert all the balancers have the same ONLINE rows
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - groups['balancers'] | map('extract', hostvars, 'proxysql_ha_online_rows') | map('join', ',') | unique | list | length == 1
+    fail_msg: "The balancers have different ONLINE rows: {{ groups['balancers'] | map('extract', hostvars, 'proxysql_ha_online_rows') | list }}"

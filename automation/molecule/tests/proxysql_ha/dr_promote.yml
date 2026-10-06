@@ -1,0 +1,9 @@
+---
+# 🚀 Manual promotion of the DR node (reference architecture 2.2.2), documented only: it is NOT included in verify.yml
+# 🎯 The promotion is not automated by Autobase and cannot be tested without destroying the etcd quorum of the test cluster
+#
+# Procedure after the loss of both prod sites (only the etcd member of the DR node is left, no quorum):
+#   1. Recover etcd on the DR node (for example, restart it as a single-member cluster with --force-new-cluster).
+#   2. Remove 'nofailover=true' and 'nosync=true' from patroni_tags of the DR node and run config_pgcluster.yml
+#      (or edit /etc/patroni/patroni.yml and run 'patronictl reload').
+#   3. Promote the DR node (patroni acquires the leader key once the DCS is writable) and connect to it directly, bypassing ProxySQL.

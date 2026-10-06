@@ -1,0 +1,70 @@
+---
+# 🚀 Verify that a switchover to the DR node (nofailover=true) is refused
+# 🎯 The command must fail or print an error, and the leader must not change
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_dr_switchover_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Set leader fact
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_dr_switchover_leader: "{{ proxysql_ha_dr_switchover_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first }}"
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Try a switchover to the DR node
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: >-
+    patronictl -c /etc/patroni/patroni.yml switchover
+    --leader {{ proxysql_ha_dr_switchover_leader.Member }} --candidate {{ proxysql_ha_dr_node }} --force
+  register: proxysql_ha_dr_switchover_result
+  failed_when: false
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Assert the switchover is refused
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - >-
+        proxysql_ha_dr_switchover_result.rc != 0 or
+        ((proxysql_ha_dr_switchover_result.stdout ~ proxysql_ha_dr_switchover_result.stderr) | lower
+        is search('fail|error|not eligible|does not match|no candidates|nofailover'))
+    fail_msg: "The switchover to {{ proxysql_ha_dr_node }} must be refused: {{ proxysql_ha_dr_switchover_result.stdout }}"
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Give Patroni a few seconds to act on a switchover request (if it was wrongly accepted)
+  run_once: true
+  ansible.builtin.wait_for:
+    timeout: 5
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Get cluster state after the refused switchover
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_dr_switchover_after
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Assert the leader did not change
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - >-
+        proxysql_ha_dr_switchover_after.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list
+        == [proxysql_ha_dr_switchover_leader.Member]
+    fail_msg: "The leader must stay {{ proxysql_ha_dr_switchover_leader.Member }}: {{ proxysql_ha_dr_switchover_after.stdout }}"
+
+- name: Molecule.tests.proxysql_ha.dr_switchover | Assert port 5000 still reaches the leader
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port=5000 dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_dr_switchover_route
+  failed_when: proxysql_ha_dr_switchover_route.stdout != proxysql_ha_dr_switchover_leader.Host
+  changed_when: false

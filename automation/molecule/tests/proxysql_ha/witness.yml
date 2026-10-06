@@ -1,0 +1,70 @@
+---
+# 🚀 Verify the witness node (reference architecture 2.2.3)
+# 🎯 The witness runs only etcd (a member of the 3-member cluster): there is no Patroni, no PostgreSQL and no data directory
+
+- name: Molecule.tests.proxysql_ha.witness | Check etcd health
+  ansible.builtin.command: >-
+    {{ etcd_bin_dir }}/etcdctl endpoint health
+    --endpoints={{ patroni_etcd_protocol | default('http', true) }}://{{ bind_address }}:2379
+    {% if etcd_tls_enable | default(false) | bool %}
+    --cacert={{ etcd_tls_dir }}/{{ etcd_tls_ca_crt }}
+    --cert={{ etcd_tls_dir }}/{{ etcd_tls_server_crt }}
+    --key={{ etcd_tls_dir }}/{{ etcd_tls_server_key }}
+    {% endif %}
+  environment:
+    ETCDCTL_API: "3"
+  register: proxysql_ha_witness_health
+  until: "'is healthy' in proxysql_ha_witness_health.stdout or 'is healthy' in proxysql_ha_witness_health.stderr"
+  retries: 15
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness | List etcd members
+  ansible.builtin.command: >-
+    {{ etcd_bin_dir }}/etcdctl member list
+    --endpoints={{ patroni_etcd_protocol | default('http', true) }}://{{ bind_address }}:2379
+    {% if etcd_tls_enable | default(false) | bool %}
+    --cacert={{ etcd_tls_dir }}/{{ etcd_tls_ca_crt }}
+    --cert={{ etcd_tls_dir }}/{{ etcd_tls_server_crt }}
+    --key={{ etcd_tls_dir }}/{{ etcd_tls_server_key }}
+    {% endif %}
+  environment:
+    ETCDCTL_API: "3"
+  register: proxysql_ha_witness_members
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness | Assert the etcd cluster has 3 started members
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_witness_members.stdout_lines | length == 3
+      - proxysql_ha_witness_members.stdout_lines | select('search', ', started,') | list | length == 3
+    fail_msg: "etcd must have 3 started members: {{ proxysql_ha_witness_members.stdout }}"
+
+- name: Molecule.tests.proxysql_ha.witness | Check the state of the Patroni and PostgreSQL services
+  ansible.builtin.command: systemctl is-active patroni postgresql
+  register: proxysql_ha_witness_services
+  failed_when: false
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness | Check for a Patroni unit file
+  ansible.builtin.command: systemctl cat patroni
+  register: proxysql_ha_witness_unit
+  failed_when: false
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness | Look for a PostgreSQL data directory
+  ansible.builtin.find:
+    paths: /var/lib/postgresql
+    patterns: PG_VERSION
+    recurse: true
+  register: proxysql_ha_witness_data
+
+- name: Molecule.tests.proxysql_ha.witness | Assert the witness has no Patroni, no PostgreSQL and no data directory
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_witness_services.stdout_lines | select('equalto', 'active') | list | length == 0
+      - proxysql_ha_witness_unit.rc != 0
+      - proxysql_ha_witness_data.matched == 0
+    fail_msg: >-
+      The witness must run only etcd: services={{ proxysql_ha_witness_services.stdout_lines }},
+      patroni unit rc={{ proxysql_ha_witness_unit.rc }}, data directories={{ proxysql_ha_witness_data.matched }}

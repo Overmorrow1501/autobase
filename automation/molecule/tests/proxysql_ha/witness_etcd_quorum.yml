@@ -1,0 +1,82 @@
+---
+# 🚀 Verify that the cluster keeps working while the witness etcd is down (quorum 2/3 left)
+# 🎯 The leader must not change, port 5000 must serve queries and patronictl must work; etcd is started again at the end
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_quorum_before
+  until:
+    - proxysql_ha_quorum_before.rc == 0
+    - proxysql_ha_quorum_before.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | list | length == 1
+    - proxysql_ha_quorum_before.stdout | from_json | rejectattr('State', 'in', ['running', 'streaming']) | list | length == 0
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Stop etcd on the witness
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: etcd
+    state: stopped
+  delegate_to: "{{ proxysql_ha_witness }}"
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Give Patroni a few seconds to notice the lost etcd member
+  run_once: true
+  ansible.builtin.wait_for:
+    timeout: 5
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Wait until port 5000 serves queries
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port=5000 dbname=db1 user=db1_user connect_timeout=5" -tAXc "select 1"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_quorum_query
+  until: proxysql_ha_quorum_query.rc == 0 and proxysql_ha_quorum_query.stdout == "1"
+  retries: 15
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Check that patronictl works and the leader did not change
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_quorum_after
+  until:
+    - proxysql_ha_quorum_after.rc == 0
+    - proxysql_ha_quorum_after.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list
+      == (proxysql_ha_quorum_before.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | list)
+  retries: 15
+  delay: 2
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Start etcd on the witness
+  run_once: true
+  become: true
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+  delegate_to: "{{ proxysql_ha_witness }}"
+
+- name: Molecule.tests.proxysql_ha.witness_etcd_quorum | Wait until the witness etcd is healthy again
+  run_once: true
+  ansible.builtin.command: >-
+    {{ etcd_bin_dir }}/etcdctl endpoint health
+    --endpoints={{ patroni_etcd_protocol | default('http', true) }}://{{ proxysql_ha_witness_ip }}:2379
+    {% if etcd_tls_enable | default(false) | bool %}
+    --cacert={{ etcd_tls_dir }}/{{ etcd_tls_ca_crt }}
+    --cert={{ etcd_tls_dir }}/{{ etcd_tls_server_crt }}
+    --key={{ etcd_tls_dir }}/{{ etcd_tls_server_key }}
+    {% endif %}
+  environment:
+    ETCDCTL_API: "3"
+  register: proxysql_ha_quorum_health
+  until: "'is healthy' in proxysql_ha_quorum_health.stdout or 'is healthy' in proxysql_ha_quorum_health.stderr"
+  retries: 15
+  delay: 2
+  changed_when: false

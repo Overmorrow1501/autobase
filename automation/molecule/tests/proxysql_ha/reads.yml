@@ -1,0 +1,45 @@
+---
+# 🚀 Verify which replicas serve the read connections of a listener port (parameter: proxysql_ha_read_check = { port, members })
+# 🎯 20 consecutive connections must reach exactly the expected replicas (the eligible members, the leader excluded)
+
+- name: Molecule.tests.proxysql_ha.reads | Get cluster state
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: proxysql_ha_reads_list
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.reads | Set expected replica addresses
+  run_once: true
+  ansible.builtin.set_fact:
+    proxysql_ha_reads_expected: >-
+      {{
+        proxysql_ha_reads_list.stdout | from_json | rejectattr('Role', 'equalto', 'Leader')
+        | selectattr('Member', 'in', proxysql_ha_read_check.members) | map(attribute='Host') | sort
+      }}
+
+- name: Molecule.tests.proxysql_ha.reads | Open 20 consecutive connections on port {{ proxysql_ha_read_check.port }}
+  run_once: true
+  ansible.builtin.command: >-
+    {{ postgresql_bin_dir }}/psql "host={{ proxysql_ha_vip }} port={{ proxysql_ha_read_check.port }} dbname=db1 user=db1_user connect_timeout=5"
+    -tAXc "select inet_server_addr()"
+  environment:
+    PGPASSWORD: "db1_user-test-pass"
+  register: proxysql_ha_reads_result
+  until: proxysql_ha_reads_result.rc == 0
+  retries: 5
+  delay: 1
+  changed_when: false
+  loop: "{{ range(20) | list }}"
+  loop_control:
+    label: "connection {{ item }}"
+
+- name: Molecule.tests.proxysql_ha.reads | Assert the connections reached exactly the expected replicas
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_reads_result.results | map(attribute='stdout') | map('trim') | unique | sort == proxysql_ha_reads_expected
+    fail_msg: >-
+      Port {{ proxysql_ha_read_check.port }} reached {{ proxysql_ha_reads_result.results | map(attribute='stdout') | map('trim') | unique | sort }},
+      expected {{ proxysql_ha_reads_expected }}

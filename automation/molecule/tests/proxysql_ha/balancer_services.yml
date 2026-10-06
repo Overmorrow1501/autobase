@@ -1,0 +1,30 @@
+---
+# 🚀 Verify the services of a dedicated balancer node
+# 🎯 proxysql, proxysql-patroni and keepalived must be active, and the VIP must be held by exactly one balancer
+
+- name: Molecule.tests.proxysql_ha.balancer_services | Get services state
+  ansible.builtin.command: systemctl is-active proxysql proxysql-patroni keepalived
+  register: proxysql_ha_balancer_services
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.balancer_services | Assert the services are active
+  ansible.builtin.assert:
+    that:
+      - proxysql_ha_balancer_services.stdout_lines | select('equalto', 'active') | list | length == 3
+    fail_msg: "proxysql, proxysql-patroni and keepalived must be active"
+
+- name: Molecule.tests.proxysql_ha.balancer_services | Check whether this balancer holds the VIP
+  ansible.builtin.command: ip -4 -o addr show
+  register: proxysql_ha_balancer_addresses
+  changed_when: false
+
+- name: Molecule.tests.proxysql_ha.balancer_services | Set the VIP holder fact
+  ansible.builtin.set_fact:
+    proxysql_ha_holds_vip: "{{ (proxysql_ha_vip ~ '/') in proxysql_ha_balancer_addresses.stdout }}"
+
+- name: Molecule.tests.proxysql_ha.balancer_services | Assert the VIP is held by exactly one balancer
+  run_once: true
+  ansible.builtin.assert:
+    that:
+      - groups['balancers'] | map('extract', hostvars, 'proxysql_ha_holds_vip') | select | list | length == 1
+    fail_msg: "The VIP {{ proxysql_ha_vip }} must be held by exactly one balancer"
