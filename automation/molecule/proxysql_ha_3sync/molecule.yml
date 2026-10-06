@@ -1,0 +1,127 @@
+---
+platforms:
+  - name: pgnode01
+    hostname: pgnode01
+    image: "${IMAGE_NAMESPACE:-geerlingguy}/docker-${IMAGE_DISTRO:-ubuntu2404}-ansible:${IMAGE_TAG:-latest}"
+    # docker_networks:  # TODO github.com/ansible-community/molecule/pull/2696
+    # - name: proxysql_ha_3sync_docker_network
+    # ipam_config:
+    # - subnet: 10.172.4.0/24
+    # gateway: 10.172.4.1
+    networks:
+      - name: proxysql_ha_3sync_docker_network
+        ipv4_address: 10.172.4.20
+    exposed_ports:
+      - 22/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 8300/tcp
+      - 8301/tcp
+      - 8302/tcp
+      - 8500/tcp
+      - 8600/tcp
+      - 8008/tcp
+      - 5432/tcp
+      - 6432/tcp
+    command: ""
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups:
+      - etcd_cluster
+      - master
+      - postgres_cluster
+
+  - name: pgnode02
+    hostname: pgnode02
+    image: "${IMAGE_NAMESPACE:-geerlingguy}/docker-${IMAGE_DISTRO:-ubuntu2404}-ansible:${IMAGE_TAG:-latest}"
+    networks:
+      - name: proxysql_ha_3sync_docker_network
+        ipv4_address: 10.172.4.21
+    exposed_ports:
+      - 22/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 8300/tcp
+      - 8301/tcp
+      - 8302/tcp
+      - 8500/tcp
+      - 8600/tcp
+      - 8008/tcp
+      - 5432/tcp
+      - 6432/tcp
+    command: ""
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups:
+      - etcd_cluster
+      - replica
+      - postgres_cluster
+
+  - name: pgnode03
+    hostname: pgnode03
+    image: "${IMAGE_NAMESPACE:-geerlingguy}/docker-${IMAGE_DISTRO:-ubuntu2404}-ansible:${IMAGE_TAG:-latest}"
+    networks:
+      - name: proxysql_ha_3sync_docker_network
+        ipv4_address: 10.172.4.22
+    exposed_ports:
+      - 22/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 8300/tcp
+      - 8301/tcp
+      - 8302/tcp
+      - 8500/tcp
+      - 8600/tcp
+      - 8008/tcp
+      - 5432/tcp
+      - 6432/tcp
+    command: ""
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups:
+      - etcd_cluster
+      - replica
+      - postgres_cluster
+
+  - name: pgbalancer01
+    hostname: pgbalancer01
+    image: "${IMAGE_NAMESPACE:-geerlingguy}/docker-${IMAGE_DISTRO:-ubuntu2404}-ansible:${IMAGE_TAG:-latest}"
+    networks:
+      - name: proxysql_ha_3sync_docker_network
+        ipv4_address: 10.172.4.23
+    exposed_ports:
+      - 22/tcp
+    command: ""
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups:
+      - balancers # dedicated balancer (not a database server)
+
+  - name: pgbalancer02
+    hostname: pgbalancer02
+    image: "${IMAGE_NAMESPACE:-geerlingguy}/docker-${IMAGE_DISTRO:-ubuntu2404}-ansible:${IMAGE_TAG:-latest}"
+    networks:
+      - name: proxysql_ha_3sync_docker_network
+        ipv4_address: 10.172.4.24
+    exposed_ports:
+      - 22/tcp
+    command: ""
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups:
+      - balancers # dedicated balancer (not a database server)
