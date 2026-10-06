@@ -1,0 +1,147 @@
+---
+# 🚀 This playbook verifies the Percona HA reference architecture 2.2.3 (2 nodes and a witness) with ProxySQL
+# 🎯 The tests in ../tests/proxysql_ha are shared by the three proxysql_ha_* scenarios and are parametrised by the variables below
+
+- name: Molecule.proxysql_ha_witness.verify
+  hosts: postgres_cluster
+  gather_facts: true
+  pre_tasks:
+    - name: Gather network facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      when: ansible_all_ipv4_addresses is not defined
+
+    # Get docker0 interface IP if it exists
+    - name: Get docker0 interface IP
+      ansible.builtin.set_fact:
+        docker0_ip: "{{ ansible_docker0.ipv4.address | default('') }}"
+      when: ansible_docker0 is defined and ansible_docker0.ipv4 is defined
+
+    # Define bind_address for each host (first private IPv4, excluding docker0), unless set in inventory.
+    - name: Expose bind_address as facts
+      ansible.builtin.set_fact:
+        bind_address: >-
+          {{
+            (ansible_all_ipv4_addresses | ansible.utils.ipaddr('private') | reject('equalto', docker0_ip | default('')) | list)[0] |
+            default((ansible_all_ipv4_addresses | ansible.utils.ipaddr('private'))[0], true)
+          }}
+      when: bind_address is not defined
+
+  vars: &proxysql_ha_vars
+    proxysql_ha_vip: "10.172.6.200"
+    proxysql_ha_routes:
+      - { port: 5000, recovery: "f" }
+      - { port: 5001, recovery: "t" }
+    proxysql_ha_closed_ports: [5002, 5003]
+    proxysql_ha_sync_members: [pgnode01, pgnode02]
+    proxysql_ha_async_members: []
+    proxysql_ha_read_checks:
+      - { port: 5001, members: [pgnode01, pgnode02] }
+    proxysql_ha_expected_online:
+      - { hostgroup: 20, members: [pgnode01, pgnode02] }
+    proxysql_ha_never_online: []
+    proxysql_ha_sync_count: 1
+    proxysql_ha_switchover_targets: []
+    proxysql_ha_failover_eligible: [pgnode01, pgnode02]
+    proxysql_ha_never_leader: []
+    proxysql_ha_witness: pgwitness01
+    proxysql_ha_witness_ip: "10.172.6.22"
+
+  tasks:
+    # 📝 Including the common variables for the Molecule configuration
+    # This file contains all the necessary variables for the playbook
+    - name: Molecule.proxysql_ha_witness.verify | Include Common Variables
+      ansible.builtin.include_vars:
+        file: ../../roles/common/defaults/main.yml
+
+    # Including the dcs_type variable redefined in converge.yml
+    - name: Molecule.proxysql_ha_witness.verify | Include dcs_type Variable
+      ansible.builtin.include_vars:
+        file: ../../dcs_type.yml
+
+    # 🔄 Including the common tests (etcd, Patroni, PostgreSQL) and the routing and replication tests of the topology
+    - name: Molecule.proxysql_ha_witness.verify | Include All Tests
+      ansible.builtin.include_tasks: "{{ item }}"
+      with_fileglob:
+        - ../tests/variables/main.yml
+        - ../tests/etcd/*.yml
+        - ../tests/patroni/*.yml
+        - ../tests/postgres/*.yml
+        - ../tests/proxysql_ha/routing.yml
+        - ../tests/proxysql_ha/replication.yml
+
+- name: Molecule.proxysql_ha_witness.verify | Witness
+  hosts: etcd_cluster:!postgres_cluster
+  gather_facts: true
+  pre_tasks:
+    - name: Gather network facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      when: ansible_all_ipv4_addresses is not defined
+
+    # Get docker0 interface IP if it exists
+    - name: Get docker0 interface IP
+      ansible.builtin.set_fact:
+        docker0_ip: "{{ ansible_docker0.ipv4.address | default('') }}"
+      when: ansible_docker0 is defined and ansible_docker0.ipv4 is defined
+
+    # Define bind_address for each host (first private IPv4, excluding docker0), unless set in inventory.
+    - name: Expose bind_address as facts
+      ansible.builtin.set_fact:
+        bind_address: >-
+          {{
+            (ansible_all_ipv4_addresses | ansible.utils.ipaddr('private') | reject('equalto', docker0_ip | default('')) | list)[0] |
+            default((ansible_all_ipv4_addresses | ansible.utils.ipaddr('private'))[0], true)
+          }}
+      when: bind_address is not defined
+
+  vars: *proxysql_ha_vars
+
+  tasks:
+    - name: Molecule.proxysql_ha_witness.verify | Include Common Variables
+      ansible.builtin.include_vars:
+        file: ../../roles/common/defaults/main.yml
+
+    - name: Molecule.proxysql_ha_witness.verify | Include witness tests
+      ansible.builtin.include_tasks: ../tests/proxysql_ha/witness.yml
+
+- name: Molecule.proxysql_ha_witness.verify | Balancers
+  hosts: balancers
+  gather_facts: true
+  vars: *proxysql_ha_vars
+  tasks:
+    - name: Molecule.proxysql_ha_witness.verify | Include Common Variables
+      ansible.builtin.include_vars:
+        file: ../../roles/common/defaults/main.yml
+
+    - name: Molecule.proxysql_ha_witness.verify | Include balancer tests
+      ansible.builtin.include_tasks: "../tests/proxysql_ha/{{ item }}.yml"
+      loop:
+        - balancer_services
+        - balancer_hostgroups
+
+    - name: Molecule.proxysql_ha_witness.verify | Include the ProxySQL primary hostgroup test
+      ansible.builtin.include_tasks: ../tests/proxysql/balancer.yml
+
+- name: Molecule.proxysql_ha_witness.verify | Topology
+  hosts: postgres_cluster
+  gather_facts: true
+  vars: *proxysql_ha_vars
+  tasks:
+    - name: Molecule.proxysql_ha_witness.verify | Include Common Variables
+      ansible.builtin.include_vars:
+        file: ../../roles/common/defaults/main.yml
+
+    - name: Molecule.proxysql_ha_witness.verify | Include reads test
+      ansible.builtin.include_tasks: ../tests/proxysql_ha/reads.yml
+      loop: "{{ proxysql_ha_read_checks }}"
+      loop_control:
+        loop_var: proxysql_ha_read_check
+
+    - name: Molecule.proxysql_ha_witness.verify | Include failover test
+      ansible.builtin.include_tasks: ../tests/proxysql_ha/failover.yml
+
+    - name: Molecule.proxysql_ha_witness.verify | Include witness_etcd_quorum test
+      ansible.builtin.include_tasks: ../tests/proxysql_ha/witness_etcd_quorum.yml
