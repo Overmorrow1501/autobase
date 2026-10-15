@@ -2,13 +2,34 @@
 # 🚀 Verify that ProxySQL follows an unplanned failover (the leader's Patroni is stopped)
 # 🎯 Port 5000 must reach a new leader, and the old leader must rejoin as a streaming replica
 
-- name: Molecule.tests.proxysql.failover | Get cluster state
+- name: Molecule.tests.proxysql.failover | Get cluster configuration
+  run_once: true
+  become: true
+  become_user: postgres
+  ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml show-config
+  register: proxysql_failover_config
+  changed_when: false
+
+# In synchronous mode Patroni promotes only the synchronous standby, so a failover right after
+# a switchover (before a replica is registered as synchronous) would elect no leader at all.
+- name: Molecule.tests.proxysql.failover | Wait until the cluster has a leader and, in synchronous mode, a synchronous standby
   run_once: true
   become: true
   become_user: postgres
   ansible.builtin.command: patronictl -c /etc/patroni/patroni.yml list -f json
   register: proxysql_failover_list
+  until:
+    - proxysql_failover_list.rc == 0
+    - proxysql_failover_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | list | length == 1
+    - >-
+      not proxysql_failover_sync | bool
+      or proxysql_failover_list.stdout | from_json | selectattr('Role', 'in', ['Sync Standby', 'Quorum Standby']) | list | length > 0
+  retries: 30
+  delay: 2
   changed_when: false
+  vars:
+    proxysql_failover_sync: >-
+      {{ (proxysql_failover_config.stdout | from_yaml).synchronous_mode | default(false) | string | lower not in ['false', 'off'] }}
 
 - name: Molecule.tests.proxysql.failover | Set leader fact
   run_once: true
